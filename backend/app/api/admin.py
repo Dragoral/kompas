@@ -15,7 +15,7 @@ from ..models import AuditLog, KnowledgeItem, User, now
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 admin_only = auth.require("admin")
-KINDS = {"scale", "drug", "rules", "dictionary"}
+KINDS = {"scale", "drug", "rules", "dictionary", "guideline"}
 
 
 @router.get("/knowledge")

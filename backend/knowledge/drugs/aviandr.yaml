@@ -121,8 +121,10 @@ monitoring:
   scales:
     - { scale: GAD7, every_days: 7 }
     - { scale: PHQ9, every_days: 14 }
+  # КР 457 (3.2): оценка эффективности и переносимости на 7-й, 14-й, 28-й дни, далее раз в 4 недели
   clinician_scales:
-    - { scale: HAMA, at_weeks: [0, 1, 4, 6] }
+    - { scale: HAMA, at_days: [0, 7, 14, 28, 56, 84] }
   diary: daily
   response_check_week: 4
-  remission: { scale: HAMA, max_score: 7, source: "Кинкулькина М.А. и др., пострегистрационное исследование, 2025 (SIGH-A ≤ 7)" }
+  response: { scale: HAMA, reduction_pct: 50, source: "КР 457, раздел 3.2 (ответ — снижение HARS > 50%)" }
+  remission: { scale: HAMA, below: 7, source: "КР 457, раздел 3.2 (ремиссия — HARS < 7); в пострегистрационном исследовании Авиандра — SIGH-A ≤ 7 (Кинкулькина М.А. и др.)" }

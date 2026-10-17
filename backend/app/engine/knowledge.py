@@ -19,7 +19,7 @@ from ..config import KNOWLEDGE_DIR
 from ..models import KnowledgeItem, now
 from . import logic
 
-KINDS = {"scales": "scale", "drugs": "drug", "rules": "rules"}
+KINDS = {"scales": "scale", "drugs": "drug", "rules": "rules", "guidelines": "guideline"}
 
 _lock = threading.Lock()
 _cache: dict | None = None
@@ -74,6 +74,14 @@ def validate(kind: str, body: dict) -> None:
         for ind in body["indications"]:
             if "requires" in ind:
                 logic.validate(ind["requires"])
+    elif kind == "guideline":
+        need("code", "id", "title", "icd10", "status", "url", "theses", "published")
+        for k, t in body["theses"].items():
+            if "text" not in t or "section" not in t:
+                raise ValueError(f"КР {body['code']}: тезис {k} без text/section")
+        for ln in (body.get("lines") or {}).values():
+            if ln.get("thesis") and ln["thesis"] not in body["theses"]:
+                raise ValueError(f"КР {body['code']}: линия ссылается на несуществующий тезис {ln['thesis']}")
     elif kind == "rules":
         need("rules")
         if "applies_when" in body:
@@ -96,7 +104,7 @@ def get(db: Session) -> dict:
         if _cache is not None:
             return _cache
     rows = db.scalars(select(KnowledgeItem).where(KnowledgeItem.active.is_(True))).all()
-    kb: dict = {"scale": {}, "drug": {}, "rules": {}, "dictionary": {}, "versions": {}}
+    kb: dict = {"scale": {}, "drug": {}, "rules": {}, "dictionary": {}, "guideline": {}, "versions": {}}
     for r in rows:
         kb.setdefault(r.kind, {})[r.code] = r.body
         kb["versions"][(r.kind, r.code)] = r.version

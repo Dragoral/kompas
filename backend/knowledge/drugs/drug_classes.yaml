@@ -41,6 +41,10 @@ substances:
   гидроксихлорохин: { classes: [cyp2d6_inhibitor], aliases: [плаквенил] }
   кетоконазол: { classes: [cyp2d6_inhibitor], aliases: [низорал] }
   бупропион: { classes: [cyp2d6_inhibitor], aliases: [велбутрин, зыбан] }
+  прегабалин: { classes: [gabapentinoid], aliases: [лирика, альгерика] }
+  имипрамин: { classes: [tca], aliases: [мелипрамин] }
+  буспирон: { classes: [anxiolytic], aliases: [спитомин] }
+  вортиоксетин: { classes: [other_antidepressant], aliases: [бринтелликс] }
   фабомотизол: { classes: [anxiolytic], aliases: [афобазол] }
   этифоксин: { classes: [anxiolytic], aliases: [стрезам] }
   метопролол: { classes: [beta_blocker], aliases: [беталок, эгилок] }

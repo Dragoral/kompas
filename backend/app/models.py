@@ -135,6 +135,9 @@ class Patient(Base):
     profile: Mapped[dict] = mapped_column(JSON, default=dict)
     diagnoses: Mapped[list] = mapped_column(JSON, default=list)      # [{icd10, title, primary}]
     current_meds: Mapped[list] = mapped_column(JSON, default=list)   # [{name, inn, classes[], dose, since}]
+    # Предшествующие курсы: [{inn, dose, weeks, outcome: response|partial|no_response|intolerance}]
+    # — по ним определяется этап терапии по КР
+    therapy_history: Mapped[list] = mapped_column(JSON, default=list)
     maoi_stopped_at: Mapped[date | None] = mapped_column(Date)
     alert_thresholds: Mapped[dict] = mapped_column(JSON, default=dict)  # индивидуальные пороги (193н п. 46 «и»)
 

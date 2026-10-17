@@ -76,6 +76,7 @@ class PatientIn(BaseModel):
     profile: dict = Field(default_factory=dict)
     diagnoses: list[dict] = Field(default_factory=list)
     current_meds: list[dict] = Field(default_factory=list)
+    therapy_history: list[dict] = Field(default_factory=list)
     maoi_stopped_at: date | None = None
     in_person_visit: bool = True  # пациент заводится на очном приёме
 
@@ -96,6 +97,18 @@ def _normalize_meds(db: Session, meds: list[dict]) -> list[dict]:
     return out
 
 
+OUTCOMES = {"response", "partial", "no_response", "intolerance", "unknown"}
+
+
+def _validate_history(items: list[dict]) -> list[dict]:
+    out = []
+    for c in items:
+        if not isinstance(c, dict) or not c.get("inn") or c.get("outcome", "unknown") not in OUTCOMES:
+            raise HTTPException(422, f"Курс терапии: нужны inn и outcome из {sorted(OUTCOMES)}")
+        out.append({"inn": str(c["inn"]).lower(), "dose": c.get("dose"), "weeks": c.get("weeks"), "outcome": c.get("outcome", "unknown")})
+    return out
+
+
 @router.post("/patients")
 def create_patient(data: PatientIn, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
     login = "p" + secrets.token_hex(3)
@@ -104,7 +117,8 @@ def create_patient(data: PatientIn, request: Request, user: User = Depends(docto
     db.add(pu)
     db.flush()
     p = Patient(code=_code(db), user_id=pu.id, doctor_id=user.id, sex=data.sex, profile=data.profile,
-                diagnoses=data.diagnoses, current_meds=_normalize_meds(db, data.current_meds), maoi_stopped_at=data.maoi_stopped_at)
+                diagnoses=data.diagnoses, current_meds=_normalize_meds(db, data.current_meds),
+                therapy_history=_validate_history(data.therapy_history), maoi_stopped_at=data.maoi_stopped_at)
     db.add(p)
     db.flush()
     p.full_name = data.full_name.strip()
@@ -130,7 +144,7 @@ def card(pid: int, request: Request, user: User = Depends(doctor_only), db: Sess
         "patient": {
             "id": p.id, "code": p.code, "full_name": p.full_name, "birth_date": p.birth_date, "age": ctx["patient"]["age"],
             "sex": p.sex, "contacts": json.loads(p.contacts or "{}"), "profile": p.profile, "diagnoses": p.diagnoses,
-            "current_meds": p.current_meds, "maoi_stopped_at": p.maoi_stopped_at,
+            "current_meds": p.current_meds, "therapy_history": p.therapy_history, "maoi_stopped_at": p.maoi_stopped_at,
             "in_person_visit_at": p.in_person_visit_at, "monitoring_active": p.monitoring_active,
             "consent": {"at": p.consent_at, "version": p.consent_version, "withdrawn_at": p.consent_withdrawn_at},
             "thresholds": ctx["thresholds"], "threshold_overrides": p.alert_thresholds,
@@ -161,6 +175,7 @@ class PatientPatch(BaseModel):
     profile: dict | None = None
     diagnoses: list[dict] | None = None
     current_meds: list[dict] | None = None
+    therapy_history: list[dict] | None = None
     maoi_stopped_at: date | None = None
     alert_thresholds: dict | None = None
 
@@ -176,6 +191,8 @@ def patch_patient(pid: int, data: PatientPatch, request: Request, user: User = D
             raise HTTPException(422, f"Недопустимые пороги: {bad}")
     if "current_meds" in changed:
         changed["current_meds"] = _normalize_meds(db, data.current_meds or [])
+    if "therapy_history" in changed:
+        changed["therapy_history"] = _validate_history(data.therapy_history or [])
     for k, v in changed.items():
         setattr(p, k, v)
     auth.audit(db, user, "patient_fields_changed", "patient", p.id, patient_id=p.id, fields=sorted(changed))
@@ -491,6 +508,9 @@ def apply_document(did: int, request: Request, user: User = Depends(doctor_only)
     p.diagnoses = p.diagnoses + [x for x in ex.get("diagnoses", []) if x["icd10"] not in known]
     known_m = {(m.get("inn") or m.get("name")) for m in p.current_meds}
     p.current_meds = p.current_meds + [m for m in _normalize_meds(db, ex.get("medications", [])) if (m.get("inn") or m.get("name")) not in known_m]
+    known_h = {c["inn"] for c in p.therapy_history}
+    p.therapy_history = p.therapy_history + [{"inn": m["inn"], "dose": m.get("dose"), "weeks": None, "outcome": "unknown"}
+                                             for m in ex.get("past_medications", []) if m.get("inn") and m["inn"] not in known_h]
     prof = dict(p.profile)
     for k in ("conditions", "allergies"):
         prof[k] = sorted(set(prof.get(k, [])) | set(ex.get(k, [])))

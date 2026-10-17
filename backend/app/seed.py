@@ -64,10 +64,10 @@ def user(db, login, role, full_name, specialty=None, duty=False) -> User:
     return u
 
 
-def patient(db, login, doctor: User, full_name, birth, sex, profile, diagnoses, meds=(), visit_days_ago=40) -> Patient:
+def patient(db, login, doctor: User, full_name, birth, sex, profile, diagnoses, meds=(), visit_days_ago=40, history=()) -> Patient:
     u = user(db, login, "patient", "Пациент")
     p = Patient(code=f"P-DEMO{login[-1]}", user_id=u.id, doctor_id=doctor.id, sex=sex, profile=profile, diagnoses=diagnoses,
-                current_meds=list(meds), monitoring_active=True, consent_version=consent.VERSION,
+                current_meds=list(meds), therapy_history=list(history), monitoring_active=True, consent_version=consent.VERSION,
                 consent_text_sha256=consent.SHA256, consent_at=now() - timedelta(days=visit_days_ago),
                 in_person_visit_at=now() - timedelta(days=visit_days_ago), diagnosis_confirmed_by=doctor.id)
     db.add(p)
@@ -124,9 +124,13 @@ def run(reset: bool) -> None:
         user(db, "admin", "admin", "Администратор")
         t = now()
 
-        # 1. ГТР у психиатра: Авиандр по показаниям, ответ на терапию, ремиссия по HAM-A к 6-й неделе
+        # 1. ГТР у психиатра: неэффективность 1-й и 2-й линии (КР 457) -> Авиандр по показаниям и по КР,
+        #    ответ на терапию, ремиссия по HAM-A к 6-й неделе
         p1 = patient(db, "patient1", psy, "Соколова Мария Андреевна", date(1991, 4, 12), "f",
-                     {"conditions": [], "allergies": [], "egfr": 96}, [{"icd10": "F41.1", "title": "Генерализованное тревожное расстройство", "primary": True}])
+                     {"conditions": [], "allergies": [], "egfr": 96, "psychotherapy": "КПТ, 12 сеансов"},
+                     [{"icd10": "F41.1", "title": "Генерализованное тревожное расстройство", "primary": True}],
+                     history=[{"inn": "эсциталопрам", "dose": "20 мг/сут", "weeks": 6, "outcome": "no_response"},
+                              {"inn": "дулоксетин", "dose": "60 мг/сут", "weeks": 3, "outcome": "intolerance"}])
         prescribe(db, kb, p1, psy, "aviandr", "gad", 40, 0.96)
         for wk, (g, h) in enumerate([(15, 24), (12, 17), (10, 13), (8, 10), (6, 8), (5, 6)]):
             add_scale(db, kb, p1, "GAD7", g, t - timedelta(days=41 - wk * 7), p1_user := db.get(User, p1.user_id))
@@ -187,7 +191,9 @@ def run(reset: bool) -> None:
         p6 = patient(db, "patient6", psy, "Новикова Ольга Сергеевна", date(1958, 3, 30), "f",
                      {"conditions": ["cardiovascular"], "allergies": []},
                      [{"icd10": "F41.1", "title": "Генерализованное тревожное расстройство", "primary": True}],
-                     meds=[{"name": "Бисопролол", "inn": "бисопролол", "dose": "5 мг 1 р/сут"}], visit_days_ago=22)
+                     meds=[{"name": "Бисопролол", "inn": "бисопролол", "dose": "5 мг 1 р/сут"}], visit_days_ago=22,
+                     history=[{"inn": "сертралин", "dose": "100 мг/сут", "weeks": 8, "outcome": "partial"},
+                              {"inn": "прегабалин", "dose": "300 мг/сут", "weeks": 6, "outcome": "no_response"}])
         p6_user = db.get(User, p6.user_id)
         rx6 = prescribe(db, kb, p6, psy, "aviandr", "gad", 21, 0.62)
         add_scale(db, kb, p6, "GAD7", 14, t - timedelta(days=22), p6_user)

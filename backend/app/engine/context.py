@@ -45,6 +45,7 @@ def build(db: Session, patient: Patient, at: datetime | None = None) -> dict:
             "allergies": list(prof.get("allergies", [])),
             "post_covid": bool(prof.get("post_covid")),
             "drives_professionally": bool(prof.get("drives_professionally")),
+            "psychotherapy": prof.get("psychotherapy"),
             "icd10": [d["icd10"] for d in patient.diagnoses or []],
         },
         "doctor": {"id": doctor.id, "specialty": doctor.specialty},
@@ -62,6 +63,7 @@ def build(db: Session, patient: Patient, at: datetime | None = None) -> dict:
         by_class.setdefault("alcohol", []).append("алкоголь")
     maoi_days = (at.date() - patient.maoi_stopped_at).days if patient.maoi_stopped_at else None
     ctx["meds"] = {"classes": sorted(by_class), "by_class": by_class, "maoi_stopped_days_ago": maoi_days}
+    ctx["history"] = {"courses": list(patient.therapy_history or [])}
 
     # Шкалы: последнее значение, предыдущее, исходное, динамика
     scales: dict = {}

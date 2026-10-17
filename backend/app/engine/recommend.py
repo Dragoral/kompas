@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import time
 
-from . import knowledge, logic
+from . import guidelines, knowledge, logic
 
 SEVERITY_ORDER = {"contraindicated": 3, "major": 2, "moderate": 1}
 
@@ -48,6 +48,17 @@ def evaluate_drug(drug: dict, ctx: dict, kb: dict) -> dict:
             })
     interactions.sort(key=lambda x: -SEVERITY_ORDER.get(x["severity"], 0))
 
+    # Ранее применялся у пациента (анамнез курсов)
+    outcome_titles = {"no_response": "без эффекта", "partial": "частичный эффект", "intolerance": "непереносимость",
+                      "response": "был эффективен", "unknown": "исход не указан"}
+    prior = [c for c in ctx.get("history", {}).get("courses", []) if c.get("inn") == drug["inn"]]
+    prior_courses = [{"dose": c.get("dose"), "weeks": c.get("weeks"), "outcome": c.get("outcome"),
+                      "outcome_title": outcome_titles.get(c.get("outcome"), c.get("outcome"))} for c in prior]
+    if any(c.get("outcome") in ("no_response", "intolerance") for c in prior):
+        cautions.append({"id": "prior_failure", "title": "В анамнезе пациента курс этого препарата: " +
+                         "; ".join(f"{c['dose'] or ''} {c['weeks'] or '?'} нед. — {c['outcome_title']}".strip() for c in prior_courses),
+                         "source": "Анамнез терапии (карта пациента)"})
+
     blocked = bool(contra) or any(i["severity"] == "contraindicated" for i in interactions)
     if blocked:
         status = "contraindicated"
@@ -71,6 +82,8 @@ def evaluate_drug(drug: dict, ctx: dict, kb: dict) -> dict:
         "additional_monitoring": drug.get("additional_monitoring", False),
         "verified": drug.get("verified", False),
         "registration": drug.get("registration"),
+        "guideline_positions": guidelines.drug_position(drug, kb, ctx),
+        "prior_courses": prior_courses,
         "sources": [s for s in drug.get("sources", {}).values()],
         "note": {
             "indicated": "Показан в рамках зарегистрированных показаний. Назначение — после подтверждения врачом.",
@@ -99,9 +112,13 @@ def recommend(ctx: dict, kb: dict, drug_ids: list[str] | None = None) -> dict:
     t0 = time.perf_counter()
     order = {"indicated": 0, "off_label": 1, "contraindicated": 2}
     drugs = [evaluate_drug(d, ctx, kb) for code, d in kb["drug"].items() if not drug_ids or code in drug_ids]
-    drugs.sort(key=lambda d: (order[d["status"]], d["drug_id"] != "aviandr"))
+    failed_before = lambda d: any(c["outcome"] in ("no_response", "intolerance") for c in d["prior_courses"])
+    drugs.sort(key=lambda d: (order[d["status"]], failed_before(d), d["drug_id"] != "aviandr"))
     return {
         "drugs": drugs,
         "routing": routing(ctx, kb),
+        "guidelines": guidelines.evaluate(ctx, kb),
+        "guidelines_note": None if guidelines.applicable(ctx, kb) else
+            "Для диагнозов пациента клинические рекомендации в справочнике не загружены — рекомендации только по инструкции к препаратам",
         "elapsed_ms": round((time.perf_counter() - t0) * 1000, 2),
     }
