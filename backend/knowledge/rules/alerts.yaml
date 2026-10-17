@@ -73,7 +73,7 @@ rules:
     when: { "==": [{ var: ae.serious_open }, true] }
     message: "Пациент сообщил о серьёзной НР: {ae.last_title}"
     actions: [notify_doctor, propose_hold_therapy, pharmacovigilance_draft, propose_visit]
-    source: "Приказ Росздравнадзора № 1071 (фармаконадзор); ▼ дополнительный мониторинг Авиандр"
+    source: "Порядок фармаконадзора, приказ Росздравнадзора № 3518 (пп. 21–22); ▼ дополнительный мониторинг Авиандр"
 
   - id: adverse_event
     severity: medium
@@ -81,7 +81,7 @@ rules:
     when: { and: [{ ">": [{ var: ae.open_count }, 0] }, { "!=": [{ var: ae.serious_open }, true] }] }
     message: "Новая НР: {ae.last_title}"
     actions: [notify_doctor, pharmacovigilance_draft]
-    source: "Инструкция по медицинскому применению; фармаконадзор"
+    source: "Инструкция по медицинскому применению; приказ Росздравнадзора № 3518, п. 20 (несерьёзные НР — внутренний учёт)"
 
   - id: low_adherence
     severity: medium

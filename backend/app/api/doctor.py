@@ -481,7 +481,8 @@ def decide(aid: int, data: DecideIn, request: Request, user: User = Depends(doct
 
 @router.get("/actions/{aid}/pv-report")
 def pv_report(aid: int, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
-    """Черновик извещения о нежелательной реакции (Порядок фармаконадзора, приказ Росздравнадзора № 1071)."""
+    """Черновик сообщения о нежелательной реакции (Порядок фармаконадзора, приказ Росздравнадзора
+    от 17.06.2024 № 3518, действует с 01.03.2025; заменил приказ № 1071)."""
     a = db.get(ClinicalAction, aid)
     if not a or a.kind != "pv_report":
         raise HTTPException(404, "Извещение не найдено")
@@ -492,12 +493,20 @@ def pv_report(aid: int, request: Request, user: User = Depends(doctor_only), db:
     drug = kb["drug"].get(rx.drug_id, {}) if rx else {}
     doctor = db.get(User, p.doctor_id)
     severe = bool(ae and (ae.life_threatening or ae.serious))
-    known_at = ae.created_at if ae else a.created_at
+    known_at = ae.created_at if ae else a.created_at  # п. 24: срок — со дня, когда сведения стали известны
+    if ae and ae.life_threatening:
+        deadline, rule, mandatory = services.add_business_days(known_at, 3), "Серьёзная НР с летальным исходом или угрозой жизни — не позднее 3 рабочих дней (п. 21)", True
+    elif severe:
+        deadline, rule, mandatory = known_at + timedelta(days=15), "Серьёзная НР — не позднее 15 календарных дней (п. 22)", True
+    else:
+        deadline, rule, mandatory = None, "Несерьёзная НР: обязательное сообщение в Росздравнадзор не требуется, учёт — по внутреннему порядку медицинской организации (п. 20); сообщение может быть направлено добровольно", False
     db.commit()
     return {
-        "form": "Извещение о нежелательной реакции или отсутствии терапевтического эффекта лекарственного препарата",
-        "deadline": (services.add_business_days(known_at, 3) if ae and ae.life_threatening else known_at + timedelta(days=15)),
-        "deadline_rule": "Серьёзные НР с угрозой жизни/летальным исходом — не более 3 рабочих дней; прочие — не более 15 календарных дней (Порядок № 1071, п. 36)",
+        "form": "Сообщение о нежелательной реакции лекарственного препарата",
+        "legal_basis": "Порядок фармаконадзора лекарственных препаратов для медицинского применения, приказ Росздравнадзора от 17.06.2024 № 3518",
+        "mandatory": mandatory,
+        "deadline": deadline,
+        "deadline_rule": rule,
         "patient": {"code": p.code, "sex": p.sex, "age": context.age(p.birth_date)},  # обезличено
         "suspected_drug": drug and {"trade_name": drug.get("trade_name"), "inn": drug.get("inn"),
                                     "registration": drug.get("registration"), "regimen": rx.regimen, "started_at": rx.started_at},
@@ -506,7 +515,7 @@ def pv_report(aid: int, request: Request, user: User = Depends(doctor_only), db:
                             "expected_by_instruction": ae.expected, "onset": ae.created_at, "description": ae.description},
         "additional_monitoring": drug.get("additional_monitoring", False),
         "reporter": {"full_name": doctor.full_name, "specialty": doctor.specialty},
-        "submit_to": "АИС Росздравнадзора (подсистема «Фармаконадзор»)",
+        "submit_to": "АИС Росздравнадзора (п. 7); при технической невозможности — по электронной почте (пп. 8, 10); копия — в медицинскую документацию пациента (п. 25)",
         "severe": severe,
     }
 

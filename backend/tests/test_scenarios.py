@@ -91,6 +91,8 @@ def test_s6_adverse_event_pharmacovigilance(client, tokens):
     assert rep["suspected_drug"]["trade_name"] == "Авиандр"
     assert rep["reaction"]["expected_by_instruction"] is True
     assert rep["additional_monitoring"] is True
+    assert rep["mandatory"] is False and rep["deadline"] is None  # несерьёзная НР — п. 20 приказа № 3518
+    assert "3518" in rep["legal_basis"]
     assert "full_name" not in rep["patient"]  # обезличено
     alerts = client.get("/api/doctor/alerts", headers=tokens["psychiatrist"]).json()
     assert any(x["patient_id"] == p and x["rule_id"] == "low_adherence" for x in alerts)
