@@ -1,0 +1,29 @@
+code: GAD7
+title: GAD-7 — шкала генерализованного тревожного расстройства
+respondent: patient
+period: За последние 2 недели как часто вас беспокоили следующие проблемы?
+license: Свободное использование (Pfizer Inc.), разрешение не требуется
+validation:
+  - Spitzer R.L. et al. A brief measure for assessing GAD: the GAD-7. Arch Intern Med. 2006;166(10):1092–1097
+  - Золотарёва А.А. Адаптация русскоязычной версии GAD-7. Консультативная психология и психотерапия. 2023;31(4)
+verified: false
+options: &opts
+  - { value: 0, label: Ни разу }
+  - { value: 1, label: Несколько дней }
+  - { value: 2, label: Более половины дней }
+  - { value: 3, label: Почти каждый день }
+items:
+  - { n: 1, text: "Вы нервничали, тревожились или испытывали сильный стресс", options: *opts }
+  - { n: 2, text: "Вы были неспособны успокоиться или контролировать своё волнение", options: *opts }
+  - { n: 3, text: "Вы слишком сильно волновались по разным поводам", options: *opts }
+  - { n: 4, text: "Вам было трудно расслабиться", options: *opts }
+  - { n: 5, text: "Вы были настолько суетливы, что вам было тяжело усидеть на месте", options: *opts }
+  - { n: 6, text: "Вы легко злились или раздражались", options: *opts }
+  - { n: 7, text: "Вы испытывали страх, словно должно произойти что-то ужасное", options: *opts }
+scoring: { method: sum, min: 0, max: 21 }
+bands:
+  - { min: 0, max: 4, label: Минимальная, severity: 0 }
+  - { min: 5, max: 9, label: Лёгкая, severity: 1 }
+  - { min: 10, max: 14, label: Умеренная, severity: 2 }
+  - { min: 15, max: 21, label: Тяжёлая, severity: 3 }
+mcid: 4   # Toussaint A. et al., J Affect Disord 2020

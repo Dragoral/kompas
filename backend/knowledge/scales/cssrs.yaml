@@ -1,0 +1,26 @@
+code: CSSRS
+title: C-SSRS — Колумбийская шкала оценки тяжести суицидальных намерений (скрининг)
+respondent: patient
+period: За последний месяц
+license: Бесплатно для клинического и научного использования (The Columbia Lighthouse Project); требуется уведомление правообладателя
+validation:
+  - Posner K. et al. The Columbia–Suicide Severity Rating Scale. Am J Psychiatry. 2011;168(12):1266–1277
+  - Официальная русскоязычная версия — cssrs.columbia.edu
+verified: false
+# Скрининг: пункты 3–6 и пункт 6 (поведение за 3 мес.) — высокий риск.
+options: &yn
+  - { value: 0, label: Нет }
+  - { value: 1, label: Да }
+items:
+  - { n: 1, text: "Хотелось ли вам умереть или уснуть и не проснуться?", options: *yn }
+  - { n: 2, text: "Были ли у вас мысли о том, чтобы покончить с собой?", options: *yn, critical: true }
+  - { n: 3, text: "Думали ли вы о том, как могли бы это сделать?", options: *yn, critical: true }
+  - { n: 4, text: "Было ли у вас намерение действовать в соответствии с этими мыслями?", options: *yn, critical: true }
+  - { n: 5, text: "Начинали ли вы продумывать или продумали детали того, как покончить с собой, и собирались ли осуществить этот план?", options: *yn, critical: true }
+  - { n: 6, text: "За последние 3 месяца делали ли вы что-либо, начинали делать или готовились сделать, чтобы покончить с собой?", options: *yn, critical: true }
+scoring: { method: max_item_positive }
+bands:
+  - { min: 0, max: 0, label: Риск не выявлен, severity: 0 }
+  - { min: 1, max: 2, label: Низкий риск, severity: 1 }
+  - { min: 3, max: 3, label: Умеренный риск, severity: 2 }
+  - { min: 4, max: 6, label: Высокий риск, severity: 4 }

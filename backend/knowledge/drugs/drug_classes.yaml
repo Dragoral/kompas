@@ -1,0 +1,70 @@
+# Словарь: действующее вещество / торговое название -> фармакологические классы.
+# Используется для проверки взаимодействий с текущей терапией пациента и при
+# извлечении назначений из историй болезни. Ключи — в нижнем регистре.
+substances:
+  маритупирдин: { classes: [anxiolytic], aliases: [авиандр] }
+  эсциталопрам: { classes: [ssri], aliases: [ципралекс, селектра, эленса] }
+  сертралин: { classes: [ssri, cyp2d6_inhibitor], aliases: [золофт, асентра, стимулотон] }
+  флуоксетин: { classes: [ssri, cyp2d6_inhibitor], aliases: [прозак, флуоксетин-ланнахер] }
+  пароксетин: { classes: [ssri, cyp2d6_inhibitor], aliases: [паксил, рексетин] }
+  флувоксамин: { classes: [ssri], aliases: [феварин] }
+  венлафаксин: { classes: [snri], aliases: [велаксин, велафакс] }
+  дулоксетин: { classes: [snri, cyp2d6_inhibitor], aliases: [симбалта] }
+  амитриптилин: { classes: [tca], aliases: [] }
+  кломипрамин: { classes: [tca], aliases: [анафранил] }
+  миртазапин: { classes: [nassa], aliases: [ремерон, каликста] }
+  агомелатин: { classes: [melatonergic], aliases: [вальдоксан] }
+  пирлиндол: { classes: [maoi], aliases: [пиразидол] }
+  моклобемид: { classes: [maoi], aliases: [аурорикс] }
+  селегилин: { classes: [maoi], aliases: [] }
+  линезолид: { classes: [maoi], aliases: [зивокс] }
+  феназепам: { classes: [benzodiazepine], aliases: [бромдигидрохлорфенилбензодиазепин] }
+  алпразолам: { classes: [benzodiazepine], aliases: [ксанакс, золомакс] }
+  диазепам: { classes: [benzodiazepine], aliases: [реланиум, сибазон] }
+  кветиапин: { classes: [antipsychotic], aliases: [сероквель] }
+  оланзапин: { classes: [antipsychotic], aliases: [зипрекса] }
+  галоперидол: { classes: [antipsychotic], aliases: [] }
+  зопиклон: { classes: [hypnotic], aliases: [имован, сомнол] }
+  золпидем: { classes: [hypnotic], aliases: [ивадал] }
+  гидроксизин: { classes: [antihistamine_h1], aliases: [атаракс] }
+  дифенгидрамин: { classes: [antihistamine_h1, cyp2d6_inhibitor], aliases: [димедрол] }
+  трамадол: { classes: [opioid], aliases: [трамал] }
+  фентанил: { classes: [opioid], aliases: [] }
+  тримеперидин: { classes: [opioid], aliases: [промедол] }
+  суматриптан: { classes: [triptan], aliases: [имигран, амигренин] }
+  золмитриптан: { classes: [triptan], aliases: [зомиг] }
+  лития карбонат: { classes: [lithium], aliases: [литий, седалит] }
+  зверобой: { classes: [st_johns_wort], aliases: [] }
+  триптофан: { classes: [tryptophan], aliases: [l-триптофан] }
+  тербинафин: { classes: [cyp2d6_inhibitor], aliases: [ламизил] }
+  хинидин: { classes: [cyp2d6_inhibitor], aliases: [] }
+  гидроксихлорохин: { classes: [cyp2d6_inhibitor], aliases: [плаквенил] }
+  кетоконазол: { classes: [cyp2d6_inhibitor], aliases: [низорал] }
+  бупропион: { classes: [cyp2d6_inhibitor], aliases: [велбутрин, зыбан] }
+  фабомотизол: { classes: [anxiolytic], aliases: [афобазол] }
+  этифоксин: { classes: [anxiolytic], aliases: [стрезам] }
+  метопролол: { classes: [beta_blocker], aliases: [беталок, эгилок] }
+  бисопролол: { classes: [beta_blocker], aliases: [конкор] }
+  амлодипин: { classes: [antihypertensive], aliases: [норваск] }
+  метформин: { classes: [antidiabetic], aliases: [глюкофаж, сиофор] }
+  левотироксин: { classes: [thyroid], aliases: [эутирокс, l-тироксин] }
+  аторвастатин: { classes: [statin], aliases: [липримар, аторис] }
+  амиодарон: { classes: [qt_prolonging], aliases: [кордарон] }
+
+class_titles:
+  ssri: СИОЗС
+  snri: СИОЗСН
+  tca: трициклические антидепрессанты
+  maoi: ингибиторы МАО
+  benzodiazepine: бензодиазепины
+  antipsychotic: антипсихотики
+  hypnotic: снотворные
+  antihistamine_h1: блокаторы H1-рецепторов
+  opioid: опиоидные анальгетики
+  triptan: триптаны
+  lithium: препараты лития
+  st_johns_wort: зверобой
+  tryptophan: L-триптофан
+  cyp2d6_inhibitor: ингибиторы CYP2D6
+  qt_prolonging: удлиняющие QT
+  alcohol: алкоголь

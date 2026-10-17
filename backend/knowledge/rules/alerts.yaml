@@ -1,0 +1,108 @@
+# Правила алертинга. Условие `when` — JSON-logic по контексту пациента
+# (см. backend/app/engine/context.py). severity: critical | high | medium.
+# actions — что система делает автоматически (без клинических решений):
+#   notify_doctor          — мгновенное уведомление лечащему врачу (push/SSE)
+#   crisis_screen          — пациенту показывается экран экстренной помощи
+#   escalate               — если врач не подтвердил за N минут — дежурному врачу
+#   request_scale          — пациенту назначается внеплановая шкала
+#   propose_visit          — врачу предлагается внеплановый визит (подтверждает врач)
+#   propose_hold_therapy   — врачу предлагается приостановить терапию (подтверждает врач)
+#   pharmacovigilance_draft — черновик извещения о нежелательной реакции (Росздравнадзор)
+# Пороги по умолчанию. Врач может переопределить их для конкретного пациента
+# (индивидуальная настройка предельных значений — Приказ МЗ РФ № 193н, п. 46 «и»).
+thresholds:
+  phq9_severe:      { default: 20, title: "PHQ-9: тяжёлая депрессия, балл ≥" }
+  phq9_delta:       { default: 5,  title: "PHQ-9: рост с прошлой оценки, баллов ≥" }
+  gad7_delta:       { default: 4,  title: "GAD-7: рост с прошлой оценки, баллов ≥" }
+  adherence_pct:    { default: 80, title: "Приверженность за 14 дней, % <" }
+  missed_streak:    { default: 3,  title: "Пропущено приёмов подряд ≥" }
+  no_contact_days:  { default: 4,  title: "Дней без записей в дневнике ≥" }
+  escalation_min:   { default: 15, title: "Эскалация критического алерта дежурному через, мин" }
+rules:
+  - id: suicide_phq9
+    severity: critical
+    title: Суицидальные мысли (PHQ-9, пункт 9)
+    when: { ">": [{ var: scales.PHQ9.items.9 }, 0] }
+    message: "PHQ-9 п.9 = {scales.PHQ9.items.9}: пациент сообщает о мыслях о смерти/самоповреждении"
+    actions: [notify_doctor, crisis_screen, { escalate: { after_min: thresholds.escalation_min } }, { request_scale: CSSRS }, propose_visit]
+    source: "КР «Депрессивный эпизод…» (МЗ РФ, ID 301): оценка суицидального риска; Kroenke 2001 (PHQ-9)"
+
+  - id: suicide_cssrs_high
+    severity: critical
+    title: Высокий суицидальный риск (C-SSRS)
+    when: { ">=": [{ var: scales.CSSRS.score }, 4] }
+    message: "C-SSRS: высокий риск (положительный ответ на пункт {scales.CSSRS.score})"
+    actions: [notify_doctor, crisis_screen, { escalate: { after_min: 10 } }, propose_visit]
+    source: "Posner K. et al., 2011 (C-SSRS): пункты 4–6 — высокий риск"
+
+  - id: suicide_text
+    severity: critical
+    title: Тревожные высказывания в дневнике/чате
+    when: { "==": [{ var: flags.self_harm_text }, true] }
+    message: "В сообщении пациента обнаружены высказывания о самоповреждении: «{flags.self_harm_quote}»"
+    actions: [notify_doctor, crisis_screen, { escalate: { after_min: thresholds.escalation_min } }, { request_scale: CSSRS }]
+    source: "Решение команды: лексический скрининг; финальную оценку проводит врач"
+
+  - id: severe_depression
+    severity: high
+    title: Тяжёлая депрессивная симптоматика
+    when: { ">=": [{ var: scales.PHQ9.score }, { var: thresholds.phq9_severe }] }
+    message: "PHQ-9 = {scales.PHQ9.score} (тяжёлая)"
+    actions: [notify_doctor, propose_visit]
+    source: "Kroenke 2001: PHQ-9 ≥ 20 — тяжёлая депрессия"
+
+  - id: rapid_worsening_phq9
+    severity: high
+    title: Резкое ухудшение (PHQ-9)
+    when: { ">=": [{ var: scales.PHQ9.delta }, { var: thresholds.phq9_delta }] }
+    message: "PHQ-9 вырос на {scales.PHQ9.delta} балла с прошлой оценки"
+    actions: [notify_doctor, propose_visit]
+    source: "Löwe 2004: изменение ≥ 5 баллов клинически значимо"
+
+  - id: rapid_worsening_gad7
+    severity: high
+    title: Резкое ухудшение (GAD-7)
+    when: { ">=": [{ var: scales.GAD7.delta }, { var: thresholds.gad7_delta }] }
+    message: "GAD-7 вырос на {scales.GAD7.delta} балла с прошлой оценки"
+    actions: [notify_doctor, propose_visit]
+    source: "Toussaint 2020: MCID GAD-7 ≈ 4 балла"
+
+  - id: serious_adverse_event
+    severity: high
+    title: Серьёзная нежелательная реакция
+    when: { "==": [{ var: ae.serious_open }, true] }
+    message: "Пациент сообщил о серьёзной НР: {ae.last_title}"
+    actions: [notify_doctor, propose_hold_therapy, pharmacovigilance_draft, propose_visit]
+    source: "Приказ Росздравнадзора № 1071 (фармаконадзор); ▼ дополнительный мониторинг Авиандр"
+
+  - id: adverse_event
+    severity: medium
+    title: Нежелательная реакция
+    when: { and: [{ ">": [{ var: ae.open_count }, 0] }, { "!=": [{ var: ae.serious_open }, true] }] }
+    message: "Новая НР: {ae.last_title}"
+    actions: [notify_doctor, pharmacovigilance_draft]
+    source: "Инструкция по медицинскому применению; фармаконадзор"
+
+  - id: low_adherence
+    severity: medium
+    title: Низкая приверженность терапии
+    when: { or: [{ "<": [{ var: adherence.pct_14d }, { var: thresholds.adherence_pct }] }, { ">=": [{ var: adherence.missed_streak }, { var: thresholds.missed_streak }] }] }
+    message: "Приверженность {adherence.pct_14d}% за 14 дней, пропуск {adherence.missed_streak} приёмов подряд"
+    actions: [notify_doctor]
+    source: "Порог 80% — общепринятый критерий приверженности (WHO, 2003)"
+
+  - id: no_contact
+    severity: medium
+    title: Пациент не выходит на связь
+    when: { ">=": [{ var: diary.days_since_last }, { var: thresholds.no_contact_days }] }
+    message: "Нет записей в дневнике {diary.days_since_last} дн."
+    actions: [notify_doctor]
+    source: "Решение команды"
+
+  - id: no_response_week4
+    severity: medium
+    title: Нет ответа на терапию к 4-й неделе
+    when: { and: [{ ">=": [{ var: therapy.weeks_on_current }, 4] }, { ">": [{ var: scales.GAD7.change_from_baseline_pct }, -25] }] }
+    message: "{therapy.weeks_on_current} нед. терапии, GAD-7 изменился на {scales.GAD7.change_from_baseline_pct}% от исходного"
+    actions: [notify_doctor, propose_visit]
+    source: "КР «ГТР» (МЗ РФ, ID 457): оценка эффективности через 4 недели"

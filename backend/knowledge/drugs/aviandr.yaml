@@ -1,0 +1,128 @@
+# Авиандр — структурированная выжимка из инструкции по медицинскому применению.
+# Источник истины — инструкция/ОХЛП в ГРЛС (grls.rosminzdrav.ru). Любое изменение
+# в этом файле подхватывается системой без изменения кода.
+id: aviandr
+trade_name: Авиандр
+inn: маритупирдин
+atc: N05BX
+pharm_group: Анксиолитическое средство (небензодиазепиновое)
+form: таблетки, покрытые плёночной оболочкой, 20 мг
+registration:
+  number: ЛП-№(002445)-(РГ-RU)
+  date: 2023-05-31
+  holder: ООО «Авинейро» (Россия)
+  manufacturer: ООО «ИИХР» (Россия)
+additional_monitoring: true   # ▼ — препарат под дополнительным мониторингом безопасности
+verified: true                # сверено с инструкцией (см. sources)
+
+sources:
+  instruction: &instr
+    title: Инструкция по медицинскому применению ЛП Авиандр, ЛП-№(002445)-(РГ-RU)
+    url: https://grls.rosminzdrav.ru
+  vidal: &vidal
+    title: Справочник Видаль — Авиандр
+    url: https://www.vidal.ru/drugs/aviandr
+
+indications:
+  - id: gad
+    title: Генерализованное тревожное расстройство (взрослые)
+    icd10: [F41.1]
+    regimen: { dose_mg: 20, times_per_day: 2, daily_mg: 40, timing: "утром и вечером, за 30 мин до еды", duration: "определяет врач (хроническое течение)" }
+    source: *instr
+  - id: post_covid_anxiety
+    title: Тревожные состояния после COVID-19 у пациентов со стрессовой реакцией и нарушением адаптации лёгкой и средней степени
+    icd10: [F43.0, F43.2, F43.9, F41.9]
+    requires: { "==": [{ var: patient.post_covid }, true] }
+    regimen: { dose_mg: 20, times_per_day: 2, daily_mg: 40, timing: "утром и вечером, за 30 мин до еды", duration: "4 недели, по решению врача до 6 недель" }
+    source: *instr
+
+# Абсолютные противопоказания: при срабатывании назначение блокируется
+# (врач может только вручную оформить решение с обоснованием).
+contraindications:
+  - id: hypersensitivity
+    title: Гиперчувствительность к маритупирдину или вспомогательным веществам
+    when: { in: ["maritupirdine_allergy", { var: patient.allergies }] }
+  - id: epilepsy_organic
+    title: Эпилепсия, органические поражения головного мозга
+    when: { some_in: [["epilepsy", "organic_brain_disease"], { var: patient.conditions }] }
+  - id: maoi
+    title: Приём ингибиторов МАО и 2 недели после их отмены
+    when: { or: [ { in: ["maoi", { var: meds.classes }] }, { "<": [{ var: meds.maoi_stopped_days_ago }, 14] } ] }
+  - id: renal
+    title: Почечная недостаточность средней и тяжёлой степени (СКФ < 60 мл/мин)
+    when: { "<": [{ var: patient.egfr }, 60] }
+  - id: hepatic
+    title: Печёночная недостаточность (классы A, B, C по Чайлд–Пью)
+    when: { in: [{ var: patient.child_pugh }, ["A", "B", "C"]] }
+  - id: pregnancy
+    title: Беременность
+    when: { "==": [{ var: patient.pregnant }, true] }
+  - id: lactation
+    title: Период грудного вскармливания
+    when: { "==": [{ var: patient.lactating }, true] }
+  - id: age
+    title: Возраст до 18 лет
+    when: { "<": [{ var: patient.age }, 18] }
+  - id: driving
+    title: Управление транспортными средствами и работа с механизмами
+    when: { "==": [{ var: patient.drives_professionally }, true] }
+    note: Обсудить с пациентом отказ от вождения на период лечения
+
+cautions:
+  - id: cvd
+    title: Сердечно-сосудистые заболевания
+    when: { in: ["cardiovascular", { var: patient.conditions }] }
+  - id: endocrine
+    title: Сахарный диабет и другие эндокринные заболевания
+    when: { some_in: [["diabetes", "endocrine"], { var: patient.conditions }] }
+  - id: dependence
+    title: Алкогольная или наркотическая зависимость
+    when: { some_in: [["alcohol_dependence", "substance_dependence"], { var: patient.conditions }] }
+  - id: elderly
+    title: Пожилой возраст — повышенная чувствительность к нежелательным реакциям
+    when: { ">=": [{ var: patient.age }, 65] }
+
+interactions:
+  - classes: [maoi]
+    severity: contraindicated
+    text: Совместное применение противопоказано (и 2 недели после отмены иМАО)
+  - classes: [ssri, snri, tca, triptan, opioid, lithium, tryptophan, st_johns_wort]
+    severity: major
+    text: Риск серотонинового синдрома — применять с осторожностью, мониторинг
+  - classes: [benzodiazepine, antipsychotic, barbiturate, hypnotic, antihistamine_h1]
+    severity: moderate
+    text: Усиление седативного действия
+  - classes: [cyp2d6_inhibitor]
+    severity: moderate
+    text: Ингибиторы CYP2D6 могут повышать концентрацию маритупирдина (в 1,5–2 раза)
+  - classes: [alcohol]
+    severity: major
+    text: Усиление угнетения ЦНС — избегать алкоголя на период лечения
+
+adverse_reactions:
+  common: [сонливость, головная боль, головокружение, астения, парестезии]
+  uncommon: [бессонница, ухудшение качества сна, усиление тревоги, нарушение внимания,
+             снижение аппетита, дисгевзия, тошнота, боль в верхней части живота, запор,
+             гипергидроз, скованность мышц, тризм, боль в спине, повышение КФК, снижение гемоглобина]
+
+special_instructions:
+  - Не принимать двойную дозу при пропуске приёма
+  - Воздерживаться от алкоголя
+  - Не исключены лекарственная зависимость и синдром отмены
+  - Содержит лактозу
+
+pharmacokinetics:
+  t_half_h: { single: 8, repeated: 15 }
+  steady_state_days: 2
+  metabolism: [CYP1A2, CYP2C19, CYP2D6]
+
+# План мониторинга при назначении (используется для расписания шкал и визитов)
+monitoring:
+  scales:
+    - { scale: GAD7, every_days: 7 }
+    - { scale: PHQ9, every_days: 14 }
+  clinician_scales:
+    - { scale: HAMA, at_weeks: [0, 1, 4, 6] }
+  diary: daily
+  response_check_week: 4
+  remission: { scale: HAMA, max_score: 7, source: "Кинкулькина М.А. и др., пострегистрационное исследование, 2025 (SIGH-A ≤ 7)" }

@@ -1,0 +1,38 @@
+code: HAMA
+title: HAM-A — шкала тревоги Гамильтона (заполняет врач)
+respondent: clinician
+period: Оценка на момент осмотра
+license: Общественное достояние (Hamilton M., 1959)
+validation:
+  - Hamilton M. The assessment of anxiety states by rating. Br J Med Psychol. 1959;32:50–55
+  - Клинические рекомендации «Генерализованное тревожное расстройство» (МЗ РФ, ID 457)
+  - Кинкулькина М.А. и др. Авиандр при расстройствах адаптации — ремиссия SIGH-A ≤ 7
+verified: false
+options: &opts
+  - { value: 0, label: Отсутствует }
+  - { value: 1, label: Слабая }
+  - { value: 2, label: Умеренная }
+  - { value: 3, label: Выраженная }
+  - { value: 4, label: Очень выраженная }
+items:
+  - { n: 1, text: "Тревожное настроение", options: *opts }
+  - { n: 2, text: "Напряжение", options: *opts }
+  - { n: 3, text: "Страхи", options: *opts }
+  - { n: 4, text: "Инсомния", options: *opts }
+  - { n: 5, text: "Интеллектуальные нарушения", options: *opts }
+  - { n: 6, text: "Депрессивное настроение", options: *opts }
+  - { n: 7, text: "Соматические мышечные симптомы", options: *opts }
+  - { n: 8, text: "Соматические сенсорные симптомы", options: *opts }
+  - { n: 9, text: "Сердечно-сосудистые симптомы", options: *opts }
+  - { n: 10, text: "Респираторные симптомы", options: *opts }
+  - { n: 11, text: "Гастроинтестинальные симптомы", options: *opts }
+  - { n: 12, text: "Мочеполовые симптомы", options: *opts }
+  - { n: 13, text: "Вегетативные симптомы", options: *opts }
+  - { n: 14, text: "Поведение при осмотре", options: *opts }
+scoring: { method: sum, min: 0, max: 56 }
+bands:
+  - { min: 0, max: 7, label: Нет тревоги / ремиссия, severity: 0 }
+  - { min: 8, max: 17, label: Лёгкая, severity: 1 }
+  - { min: 18, max: 24, label: Умеренная, severity: 2 }
+  - { min: 25, max: 56, label: Тяжёлая, severity: 3 }
+mcid: 4

@@ -1,0 +1,68 @@
+# Маршрутизация к психиатру для врачей непсихиатрических специальностей.
+# level: mandatory («обязательно») | desirable («желательно»).
+# Итоговый уровень — максимальный среди сработавших правил.
+# Направление оформляется ТОЛЬКО после подтверждения врачом.
+applies_when: { "!=": [{ var: doctor.specialty }, "psychiatrist"] }
+rules:
+  - id: suicide_risk
+    level: mandatory
+    urgency: срочно (в день обращения)
+    title: Суицидальный риск
+    when: { or: [{ ">": [{ var: scales.PHQ9.items.9 }, 0] }, { ">=": [{ var: scales.CSSRS.score }, 2] }, { "==": [{ var: flags.self_harm_text }, true] }] }
+    source: "КР «Депрессивный эпизод…» (МЗ РФ, ID 301)"
+
+  - id: severe_depression
+    level: mandatory
+    urgency: в течение 7 дней
+    title: Тяжёлая депрессия (PHQ-9 ≥ 20)
+    when: { ">=": [{ var: scales.PHQ9.score }, 20] }
+    source: "КР «Депрессивный эпизод…» (ID 301); Kroenke 2001"
+
+  - id: psychotic_or_bipolar
+    level: mandatory
+    urgency: в течение 7 дней
+    title: Психотические симптомы или признаки биполярного расстройства
+    when: { some_in: [["psychotic_symptoms", "bipolar", "mania_history"], { var: patient.conditions }] }
+    source: "КР «Депрессивный эпизод…» (ID 301): дифференциальная диагностика"
+
+  - id: no_response
+    level: mandatory
+    urgency: плановая
+    title: Нет ответа на терапию через 4–6 недель
+    when: { and: [{ ">=": [{ var: therapy.weeks_on_current }, 4] }, { ">": [{ var: scales.GAD7.change_from_baseline_pct }, -25] }] }
+    source: "КР «ГТР» (ID 457)"
+
+  - id: dependence
+    level: mandatory
+    urgency: плановая
+    title: Коморбидная зависимость от ПАВ
+    when: { some_in: [["alcohol_dependence", "substance_dependence"], { var: patient.conditions }] }
+    source: "КР «ГТР» (ID 457)"
+
+  - id: moderate_severe_depression
+    level: desirable
+    urgency: плановая
+    title: Умеренно тяжёлая депрессия (PHQ-9 15–19)
+    when: { and: [{ ">=": [{ var: scales.PHQ9.score }, 15] }, { "<": [{ var: scales.PHQ9.score }, 20] }] }
+    source: "Kroenke 2001; КР «Депрессивный эпизод…» (ID 301)"
+
+  - id: severe_anxiety
+    level: desirable
+    urgency: плановая
+    title: Выраженная тревога (GAD-7 ≥ 15)
+    when: { ">=": [{ var: scales.GAD7.score }, 15] }
+    source: "Spitzer 2006 (GAD-7)"
+
+  - id: mixed_anxiety_depression
+    level: desirable
+    urgency: плановая
+    title: Сочетание тревоги и депрессии (GAD-7 ≥ 10 и PHQ-9 ≥ 10)
+    when: { and: [{ ">=": [{ var: scales.GAD7.score }, 10] }, { ">=": [{ var: scales.PHQ9.score }, 10] }] }
+    source: "КР «ГТР» (ID 457): коморбидность"
+
+  - id: partial_response
+    level: desirable
+    urgency: плановая
+    title: Частичный ответ на терапию
+    when: { and: [{ ">=": [{ var: therapy.weeks_on_current }, 4] }, { "<=": [{ var: scales.GAD7.change_from_baseline_pct }, -25] }, { ">": [{ var: scales.GAD7.change_from_baseline_pct }, -50] }] }
+    source: "КР «ГТР» (ID 457)"

@@ -1,0 +1,78 @@
+# Эсциталопрам — для сценариев с депрессивной симптоматикой (альтернатива, когда
+# Авиандр вне показаний). verified: false — требует сверки врачом с ОХЛП в ГРЛС.
+id: escitalopram
+trade_name: Эсциталопрам (Ципралекс и др.)
+inn: эсциталопрам
+atc: N06AB10
+pharm_group: Антидепрессант, СИОЗС
+classes: [ssri]
+additional_monitoring: false
+verified: false
+
+sources:
+  instruction: &instr
+    title: Инструкция по медицинскому применению ЛП Ципралекс (ГРЛС)
+    url: https://grls.rosminzdrav.ru
+
+indications:
+  - id: depression
+    title: Депрессивные эпизоды любой тяжести
+    icd10: [F32, F33]
+    regimen: { dose_mg: 10, times_per_day: 1, daily_mg: 10, max_daily_mg: 20, timing: "1 раз в сутки", duration: "не менее 6 месяцев после ремиссии" }
+    source: *instr
+  - id: gad
+    title: Генерализованное тревожное расстройство
+    icd10: [F41.1]
+    regimen: { dose_mg: 10, times_per_day: 1, daily_mg: 10, max_daily_mg: 20, timing: "1 раз в сутки", duration: "3 месяца и более" }
+    source: *instr
+  - id: panic
+    title: Паническое расстройство
+    icd10: [F41.0]
+    regimen: { dose_mg: 5, times_per_day: 1, daily_mg: 5, max_daily_mg: 20, timing: "первая неделя 5 мг, затем 10 мг", duration: "несколько месяцев" }
+    source: *instr
+
+contraindications:
+  - id: maoi
+    title: Одновременный приём необратимых иМАО (и 14 дней после отмены)
+    when: { or: [ { in: ["maoi", { var: meds.classes }] }, { "<": [{ var: meds.maoi_stopped_days_ago }, 14] } ] }
+  - id: qt
+    title: Удлинение интервала QT (в т.ч. врождённое)
+    when: { in: ["long_qt", { var: patient.conditions }] }
+  - id: age
+    title: Возраст до 18 лет
+    when: { "<": [{ var: patient.age }, 18] }
+
+cautions:
+  - id: elderly
+    title: Пожилой возраст — начальная доза 5 мг, максимум 10 мг/сут
+    when: { ">=": [{ var: patient.age }, 65] }
+  - id: hepatic
+    title: Печёночная недостаточность — снижение дозы
+    when: { in: [{ var: patient.child_pugh }, ["A", "B", "C"]] }
+  - id: pregnancy
+    title: Беременность — только при строгих показаниях
+    when: { "==": [{ var: patient.pregnant }, true] }
+  - id: bipolar
+    title: Риск инверсии фазы при биполярном расстройстве
+    when: { in: ["bipolar", { var: patient.conditions }] }
+
+interactions:
+  - classes: [maoi]
+    severity: contraindicated
+    text: Риск серотонинового синдрома
+  - classes: [ssri, snri, tca, triptan, opioid, lithium, st_johns_wort]
+    severity: major
+    text: Риск серотонинового синдрома
+  - classes: [qt_prolonging]
+    severity: major
+    text: Риск удлинения QT
+
+adverse_reactions:
+  common: [тошнота, головная боль, бессонница, сонливость, сексуальная дисфункция, потливость]
+  uncommon: [гипонатриемия, кровотечения]
+
+monitoring:
+  scales:
+    - { scale: PHQ9, every_days: 7 }
+    - { scale: GAD7, every_days: 14 }
+  response_check_week: 4
