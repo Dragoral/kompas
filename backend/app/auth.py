@@ -26,6 +26,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
+from . import observability
 from .crypto import new_token, token_hash
 from .db import SessionLocal, WriteSession, defer_write, get_db
 from .models import Alert, AuditLog, AuthSession, Patient, StreamTicket, User, now
@@ -106,6 +107,7 @@ def _session_user(token: str | None, db: Session) -> tuple[User, AuthSession]:
 
 def current_user(cred: HTTPAuthorizationCredentials | None = Depends(_bearer), db: Session = Depends(get_db)) -> User:
     user = _session_user(cred.credentials if cred else None, db)[0]
+    observability.user_id_var.set(user.id)  # для логов (только идентификатор)
     # Вернуть соединение в пул, пока запрос ждёт рабочий поток для обработчика
     # (иначе под нагрузкой пул исчерпывается). Объект пользователя остаётся загруженным.
     db.close()

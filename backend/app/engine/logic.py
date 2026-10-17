@@ -95,3 +95,14 @@ def render(template: str, ctx: dict) -> str:
         v = get_var(ctx, m.group(1))
         return "—" if v is None else str(v)
     return _TPL.sub(sub, template)
+
+
+def safe_eval(rule: Any, ctx: dict, ref: str) -> bool:
+    """Вычислить условие правила; при сбое — не ронять запрос: правило считается
+    не сработавшим, проблема фиксируется для администратора."""
+    try:
+        return bool(evaluate(rule, ctx))
+    except Exception as e:  # noqa: BLE001 — ошибка в данных справочника не должна ломать работу
+        from ..observability import report_problem
+        report_problem("rule", ref, f"{e.__class__.__name__}: {e}")
+        return False

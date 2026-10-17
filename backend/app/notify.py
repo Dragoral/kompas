@@ -94,7 +94,8 @@ def enqueue_escalation(db: Session, kb: dict, alert, patient, duty: User) -> Non
 
 
 def _send_log(phone: str | None, text: str) -> str:
-    log.warning("SMS -> %s: %s", (phone or "нет номера")[:6] + "***", text)
+    # текст не логируется: в сообщении доверенному лицу есть имя пациента
+    log.warning("SMS (провайдер log) -> %s***, %d символов", (phone or "нет номера")[:4], len(text))
     return "log"
 
 

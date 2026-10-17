@@ -42,12 +42,6 @@ def _pct(xs, q):
     return round(xs[min(len(xs) - 1, int(len(xs) * q))], 1)
 
 
-@router.get("/health")
-def health(db: Session = Depends(get_db)):
-    db.execute(text("SELECT 1"))
-    return {"ok": True, "uptime_s": round(time.time() - STARTED)}
-
-
 @router.get("/metrics")
 def metrics(user: User = Depends(auth.require("doctor", "admin")), db: Session = Depends(get_db)):
     with _lock:

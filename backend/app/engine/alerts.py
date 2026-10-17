@@ -43,7 +43,7 @@ def process(db: Session, patient: Patient, trigger_ref: str, received_at: dateti
     open_by_rule = {a.rule_id: a for a in open_alerts}
 
     for rule in kb["rules"].get("alerts", {}).get("rules", []):
-        if not logic.evaluate(rule["when"], ctx):
+        if not logic.safe_eval(rule["when"], ctx, f"alerts:{rule.get('id')}"):
             continue
         existing = open_by_rule.get(rule["id"])
         # Повторно не дублируем открытый алерт; критические — на каждое новое событие

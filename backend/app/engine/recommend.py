@@ -20,18 +20,18 @@ def evaluate_drug(drug: dict, ctx: dict, kb: dict) -> dict:
     indication = None
     for ind in drug["indications"]:
         if any(code.startswith(i) for code in icds for i in ind["icd10"]):
-            if "requires" in ind and not logic.evaluate(ind["requires"], ctx):
+            if "requires" in ind and not logic.safe_eval(ind["requires"], ctx, f"drug:{drug['id']}:indication:{ind['id']}"):
                 continue
             indication = ind
             break
 
     contra = [
         {"id": c["id"], "title": c["title"], "note": c.get("note"), "source": instr.get("title", "") + ", раздел «Противопоказания»"}
-        for c in drug.get("contraindications", []) if logic.evaluate(c["when"], ctx)
+        for c in drug.get("contraindications", []) if logic.safe_eval(c["when"], ctx, f"drug:{drug['id']}:contra:{c['id']}")
     ]
     cautions = [
         {"id": c["id"], "title": c["title"], "source": instr.get("title", "") + ", раздел «С осторожностью»"}
-        for c in drug.get("cautions", []) if logic.evaluate(c["when"], ctx)
+        for c in drug.get("cautions", []) if logic.safe_eval(c["when"], ctx, f"drug:{drug['id']}:caution:{c['id']}")
     ]
     by_class = ctx["meds"].get("by_class", {})
     interactions = []
@@ -100,10 +100,10 @@ def routing(ctx: dict, kb: dict) -> dict | None:
     rs = kb["rules"].get("routing")
     if not rs:
         return None
-    applies = {k: logic.evaluate(v, ctx) for k, v in (rs.get("applies") or {}).items()}
+    applies = {k: logic.safe_eval(v, ctx, f"routing:applies:{k}") for k, v in (rs.get("applies") or {}).items()}
     by_target: dict[str, list[dict]] = {}
     for r in rs["rules"]:
-        if not applies.get(r.get("applies", "all"), True) or not logic.evaluate(r["when"], ctx):
+        if not applies.get(r.get("applies", "all"), True) or not logic.safe_eval(r["when"], ctx, f"routing:{r.get('id')}"):
             continue
         by_target.setdefault(r.get("target", "psychiatrist"), []).append(
             {"id": r["id"], "title": r["title"], "level": r["level"], "urgency": r.get("urgency"), "source": r.get("source")})
