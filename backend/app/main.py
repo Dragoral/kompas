@@ -162,7 +162,7 @@ async def envelope(request: Request, call_next):
     try:
         response = await call_next(request)
     except OperationalError as e:
-        if "locked" not in str(e):
+        if "locked" not in str(e) and "too many clients" not in str(e):
             log.exception("db error on %s", request.url.path)
             response = JSONResponse({"detail": "Внутренняя ошибка сервера"}, status_code=500)
         else:

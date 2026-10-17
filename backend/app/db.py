@@ -31,7 +31,10 @@ if IS_SQLITE:
         # а не падает с «database is locked» при попытке повысить чтение до записи.
         conn.exec_driver_sql("BEGIN IMMEDIATE" if conn.get_execution_options().get("write") else "BEGIN")
 else:
-    engine = create_engine(DATABASE_URL, pool_size=30, max_overflow=30, pool_timeout=30, pool_pre_ping=True)
+    # Пул на процесс: (DB_POOL_SIZE + DB_MAX_OVERFLOW) × число процессов < max_connections PostgreSQL
+    import os
+    engine = create_engine(DATABASE_URL, pool_size=int(os.getenv("DB_POOL_SIZE", "15")),
+                           max_overflow=int(os.getenv("DB_MAX_OVERFLOW", "15")), pool_timeout=30, pool_pre_ping=True)
 
 SessionLocal = sessionmaker(engine, expire_on_commit=False)
 WriteSession = sessionmaker(engine.execution_options(write=True), expire_on_commit=False)
