@@ -230,7 +230,20 @@ def _guideline_semantics(b: dict, errors: list, warnings: list) -> None:
             errors.append({"path": f"lines.{n}.thesis", "message": f"Ссылка на несуществующий тезис «{ln['thesis']}»"})
 
 
-SEMANTICS = {"scale": _scale_semantics, "drug": _drug_semantics, "rules": _rules_semantics, "guideline": _guideline_semantics}
+def _dictionary_semantics(b: dict, errors: list, warnings: list) -> None:
+    import re
+    for key in ("diagnoses_text", "conditions"):
+        for i, x in enumerate(b.get(key, []) or []):
+            try:
+                re.compile(x.get("pattern", ""), re.I)
+            except re.error as e:
+                errors.append({"path": f"{key}.{i}.pattern", "message": f"Некорректное регулярное выражение: {e}"})
+    for i, m in enumerate(b.get("map", []) or []):
+        if not m.get("codes") or not m.get("tag"):
+            errors.append({"path": f"map.{i}", "message": "Нужны codes и tag"})
+
+
+SEMANTICS = {"dictionary": _dictionary_semantics, "scale": _scale_semantics, "drug": _drug_semantics, "rules": _rules_semantics, "guideline": _guideline_semantics}
 
 
 def check(kind: str, body: dict) -> tuple[list[dict], list[dict]]:

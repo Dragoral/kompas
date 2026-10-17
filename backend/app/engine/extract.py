@@ -72,6 +72,14 @@ SCALES = {
 }
 
 
+def _dictionaries(kb: dict) -> tuple[list, list]:
+    """Словари из справочника (редактируемые); встроенные — запасной вариант."""
+    d = kb.get("dictionary", {}).get("extraction") or {}
+    dx = [(x["pattern"], x["icd10"], x["title"]) for x in d.get("diagnoses_text", [])] or DX_TEXT
+    cond = [(x["pattern"], x["tag"]) for x in d.get("conditions", [])] or CONDITIONS
+    return dx, cond
+
+
 def _sentences(text: str) -> list[str]:
     return [s for s in re.split(r"(?<=[.!?;\n])\s+", text) if s.strip()]
 
@@ -114,8 +122,9 @@ def extract_rules(text: str, kb: dict) -> dict:
             seen.add(code)
             title = re.sub(r"^[\s:—–-]+", "", s[m.end():m.end() + 120]).split(".")[0].split(";")[0].strip(" ()")
             out["diagnoses"].append({"icd10": code, "title": title[:120] or code, "source": "code"})
-    # Диагнозы словами — если кода с той же рубрикой нет
-    for pattern, code, title in DX_TEXT:
+    # Диагнозы словами — если кода с той же рубрикой нет (словарь — справочник «extraction»)
+    dx_text, cond_map = _dictionaries(kb)
+    for pattern, code, title in dx_text:
         for s, m in _find_all(pattern, text):
             if _negated(s, m.start(), m.end()):
                 continue
@@ -158,7 +167,7 @@ def extract_rules(text: str, kb: dict) -> dict:
 
     # Состояния, влияющие на противопоказания и маршрутизацию
     conds = set()
-    for pattern, tag in CONDITIONS:
+    for pattern, tag in cond_map:
         for s, m in _find_all(pattern, text):
             if not _negated(s, m.start(), m.end()):
                 conds.add(tag)
