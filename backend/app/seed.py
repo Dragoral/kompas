@@ -22,7 +22,7 @@ from sqlalchemy import select
 from . import auth, consent
 from .config import BASE_DIR
 from .crypto import vault
-from .db import Base, SessionLocal, engine
+from .db import Base, WriteSession as SessionLocal, engine
 from .engine import alerts, knowledge, scales
 from .models import AdverseEvent, DiaryEntry, DoseLog, Patient, Prescription, ScaleAssignment, ScaleResult, User, now
 from .services import schedule_doses

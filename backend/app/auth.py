@@ -16,7 +16,6 @@ import json
 import os
 import secrets
 import threading
-import time
 from datetime import datetime, timedelta
 
 import pyotp
@@ -24,12 +23,12 @@ from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from .crypto import new_token, token_hash
-from .db import SessionLocal, get_db
-from .models import Alert, AuditLog, AuthSession, Patient, User, now
+from .db import SessionLocal, WriteSession, defer_write, get_db
+from .models import Alert, AuditLog, AuthSession, Patient, StreamTicket, User, now
 
 SESSION_TTL = timedelta(hours=int(os.getenv("SESSION_TTL_HOURS", "12")))
 IDLE_TIMEOUT = timedelta(minutes=int(os.getenv("SESSION_IDLE_MIN", "60")))
@@ -100,8 +99,8 @@ def _session_user(token: str | None, db: Session) -> tuple[User, AuthSession]:
     if REQUIRE_MFA and user.role in ("doctor", "admin") and not s.mfa_passed:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Требуется второй фактор")
     if (t - s.last_seen_at).total_seconds() > 60:  # не пишем в БД на каждый запрос
-        s.last_seen_at = t
-        db.commit()
+        sid = s.id
+        defer_write(db, lambda w: w.execute(update(AuthSession).where(AuthSession.id == sid).values(last_seen_at=t)))
     return user, s
 
 
@@ -121,27 +120,23 @@ def require(*roles: str):
     return dep
 
 
-# --- одноразовые тикеты для SSE ---------------------------------------------
-_tickets: dict[str, tuple[int, float]] = {}
-_tickets_lock = threading.Lock()
-
-
-def issue_ticket(user: User) -> str:
+# --- одноразовые тикеты для SSE (в БД: работают при нескольких процессах) ----
+def issue_ticket(db: Session, user: User) -> str:
     t = secrets.token_urlsafe(24)
-    with _tickets_lock:
-        cutoff = time.monotonic()
-        for k in [k for k, (_, exp) in _tickets.items() if exp < cutoff]:
-            del _tickets[k]
-        _tickets[t] = (user.id, time.monotonic() + 60)
+    db.add(StreamTicket(token_hash=token_hash(t), user_id=user.id, expires_at=now() + timedelta(seconds=60)))
+    db.commit()
     return t
 
 
 def redeem_ticket(ticket: str, db: Session) -> User:
-    with _tickets_lock:
-        item = _tickets.pop(ticket, None)
-    if not item or item[1] < time.monotonic():
+    with WriteSession() as w:  # одноразовый: удаление атомарно
+        res = w.execute(delete(StreamTicket).where(StreamTicket.token_hash == token_hash(ticket), StreamTicket.expires_at >= now())
+                        .returning(StreamTicket.user_id))
+        uid = res.scalar()
+        w.commit()
+    if uid is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Тикет недействителен")
-    user = db.get(User, item[0])
+    user = db.get(User, uid)
     if not user or not user.active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Учётная запись отключена")
     return user
@@ -184,8 +179,9 @@ def own_patient(user: User, db: Session) -> Patient:
 def audit(db: Session, user: User | None, action: str, entity: str, entity_id: int | None = None,
           patient_id: int | None = None, ip: str | None = None, **details) -> None:
     """Только идентификаторы и структурированные поля — без ПДн и свободного текста."""
-    db.add(AuditLog(user_id=user.id if user else None, action=action, entity=entity, entity_id=entity_id,
-                    patient_id=patient_id, details=details, ip=ip))
+    row = dict(user_id=user.id if user else None, action=action, entity=entity, entity_id=entity_id,
+               patient_id=patient_id, details=details, ip=ip, created_at=now())
+    defer_write(db, lambda w: w.add(AuditLog(**row)))
 
 
 def _canonical(r: AuditLog) -> bytes:
@@ -198,7 +194,7 @@ _seal_lock = threading.Lock()
 
 def seal_audit() -> int:
     """Сцепить новые записи журнала. Выполняется одним потоком — гонок нет."""
-    with _seal_lock, SessionLocal() as db:
+    with _seal_lock, WriteSession() as db:
         last = db.scalar(select(AuditLog).where(AuditLog.hash.is_not(None)).order_by(AuditLog.id.desc()).limit(1))
         prev = last.hash if last else "0" * 64
         rows = db.scalars(select(AuditLog).where(AuditLog.hash.is_(None)).order_by(AuditLog.id)).all()

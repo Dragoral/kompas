@@ -6,12 +6,12 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from .. import auth, consent, services
 from ..bus import bus, patient_channel
-from ..db import get_db
+from ..db import defer_write, get_db
 from ..engine import alerts, knowledge
 from ..models import AdverseEvent, Alert, DiaryEntry, DoseLog, Message, Prescription, ScaleAssignment, ScaleResult, User, now
 
@@ -144,10 +144,10 @@ def submit_ae(data: services.AdverseIn, request: Request, user: User = Depends(p
 def my_messages(user: User = Depends(patient_only), db: Session = Depends(get_db)):
     p = auth.own_patient(user, db)
     msgs = db.scalars(select(Message).where(Message.patient_id == p.id).order_by(Message.created_at)).all()
-    for m in msgs:
-        if m.sender_role != "patient" and m.read_at is None:
-            m.read_at = now()
-    db.commit()
+    unread = [m.id for m in msgs if m.sender_role != "patient" and m.read_at is None]
+    if unread:
+        t = now()
+        defer_write(db, lambda w: w.execute(update(Message).where(Message.id.in_(unread)).values(read_at=t)))
     return [services.message_dict(m) for m in msgs]
 
 
@@ -238,20 +238,29 @@ def export(request: Request, user: User = Depends(patient_only), db: Session = D
 
 
 @router.get("/me/stream")
-async def stream(ticket: str, db: Session = Depends(get_db)):
+async def stream(ticket: str, request: Request, last_event_id: int | None = None, db: Session = Depends(get_db)):
     user = auth.redeem_ticket(ticket, db)
     if user.role != "patient":
         raise HTTPException(403, "Недостаточно прав")
     p = auth.own_patient(user, db)
     db.close()
-    return sse(patient_channel(p.id))
+    return sse(patient_channel(p.id), _last_id(request, last_event_id))
 
 
-def sse(channel: str) -> StreamingResponse:
+def _last_id(request: Request, q: int | None) -> int | None:
+    h = request.headers.get("last-event-id")
+    return q if q is not None else (int(h) if h and h.isdigit() else None)
+
+
+def sse(channel: str, last_event_id: int | None = None) -> StreamingResponse:
+    """SSE-поток. При переподключении (Last-Event-ID) пропущенные события досылаются."""
     async def gen():
         q = bus.subscribe(channel)
         try:
-            yield "event: ready\ndata: {}\n\n"
+            yield "retry: 2000\nevent: ready\ndata: {}\n\n"
+            if last_event_id is not None:
+                for item in await asyncio.to_thread(bus.replay, channel, last_event_id):
+                    yield item
             while True:
                 try:
                     yield await asyncio.wait_for(q.get(), timeout=15)

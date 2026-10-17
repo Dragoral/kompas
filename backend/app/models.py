@@ -368,3 +368,30 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     prev_hash: Mapped[str | None] = mapped_column(String(64))
     hash: Mapped[str | None] = mapped_column(String(64), index=True)
+
+
+class Event(Base):
+    """Очередь событий реального времени (transactional outbox), см. bus.py."""
+    __tablename__ = "events"
+    __table_args__ = (Index("ix_events_channel_id", "channel", "id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    channel: Mapped[str] = mapped_column(String(64))
+    event: Mapped[str] = mapped_column(String(32))
+    data: Mapped[dict] = mapped_column(JSON)  # только идентификаторы и служебные поля, без свободного текста
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
+
+
+class StreamTicket(Base):
+    """Одноразовый тикет на подключение к SSE (60 с); хранится хеш."""
+    __tablename__ = "stream_tickets"
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class Lease(Base):
+    """Аренда фоновой задачи: при нескольких процессах её выполняет только один."""
+    __tablename__ = "leases"
+    name: Mapped[str] = mapped_column(String(32), primary_key=True)
+    holder: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime)

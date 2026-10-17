@@ -115,5 +115,5 @@ def mfa_confirm(data: MfaConfirmIn, user: User = Depends(auth.current_user), db:
 
 
 @router.post("/stream-ticket")
-def stream_ticket(user: User = Depends(auth.current_user)):
-    return {"ticket": auth.issue_ticket(user)}
+def stream_ticket(user: User = Depends(auth.current_user), db: Session = Depends(get_db)):
+    return {"ticket": auth.issue_ticket(db, user)}

@@ -23,6 +23,9 @@ KINDS = {"scales": "scale", "drugs": "drug", "rules": "rules", "guidelines": "gu
 
 _lock = threading.Lock()
 _cache: dict | None = None
+_cache_sig: tuple | None = None
+_checked_at = 0.0
+RECHECK_SEC = 5  # при нескольких процессах правка в админке видна всем за ≤ 5 с
 
 
 def load_yaml_dir(root: Path = KNOWLEDGE_DIR) -> list[tuple[str, str, dict]]:
@@ -98,10 +101,22 @@ def invalidate() -> None:
         _cache = None
 
 
+def _signature(db: Session) -> tuple:
+    from sqlalchemy import func
+    return tuple(db.execute(select(func.count(), func.coalesce(func.sum(KnowledgeItem.version), 0),
+                                   func.max(KnowledgeItem.updated_at))).one())
+
+
 def get(db: Session) -> dict:
-    global _cache
+    global _cache, _cache_sig, _checked_at
+    import time as _t
     with _lock:
-        if _cache is not None:
+        if _cache is not None and _t.monotonic() - _checked_at < RECHECK_SEC:
+            return _cache
+    sig = _signature(db)
+    with _lock:
+        _checked_at = _t.monotonic()
+        if _cache is not None and sig == _cache_sig:
             return _cache
     rows = db.scalars(select(KnowledgeItem).where(KnowledgeItem.active.is_(True))).all()
     kb: dict = {"scale": {}, "drug": {}, "rules": {}, "dictionary": {}, "guideline": {}, "versions": {}}
@@ -117,7 +132,7 @@ def get(db: Session) -> dict:
             names[a.lower()] = inn
     kb["name_index"] = names
     with _lock:
-        _cache = kb
+        _cache, _cache_sig = kb, sig
     return kb
 
 

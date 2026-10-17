@@ -68,6 +68,7 @@ def metrics(user: User = Depends(auth.require("doctor", "admin")), db: Session =
         rec_ms.append((time.perf_counter() - t0) * 1000)
 
     eval_path = BASE_DIR / "data" / "extraction_eval.json"
+    drill_path = BASE_DIR / "data" / "backup_drill.json"
     return {
         "requests": routes,
         "errors": errors,
@@ -78,6 +79,7 @@ def metrics(user: User = Depends(auth.require("doctor", "admin")), db: Session =
         },
         "recommendations_ms": {"p50": _pct(rec_ms, .5), "p95": _pct(rec_ms, .95), "n": len(rec_ms)},
         "extraction": json.loads(eval_path.read_text(encoding="utf-8")) if eval_path.exists() else None,
+        "backup_drill": json.loads(drill_path.read_text(encoding="utf-8")) if drill_path.exists() else None,
         "realtime_listeners": sum(len(v) for v in bus.subs.values()),
         "db": {"patients": db.scalar(select(func.count()).select_from(Patient))},
     }

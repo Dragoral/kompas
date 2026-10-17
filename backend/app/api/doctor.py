@@ -6,17 +6,17 @@ from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from .. import auth, services
 from ..bus import doctor_channel, patient_channel
 from ..crypto import vault
-from ..db import get_db
+from ..db import defer_write, get_db
 from ..engine import alerts, context, extract, fhir, knowledge, recommend
 from ..models import (AdverseEvent, Alert, ClinicalAction, Document, Message, Patient, Prescription, ScaleAssignment,
                       ScaleResult, User, now)
-from .patient import history_for, sse
+from .patient import _last_id, history_for, sse
 
 router = APIRouter(prefix="/api/doctor", tags=["doctor"])
 doctor_only = auth.require("doctor")
@@ -333,10 +333,10 @@ def assign_scale(pid: int, data: AssignIn, request: Request, user: User = Depend
 def messages(pid: int, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
     p = _p(user, pid, db, request, "messages")
     msgs = db.scalars(select(Message).where(Message.patient_id == p.id).order_by(Message.created_at)).all()
-    for m in msgs:
-        if m.sender_role == "patient" and m.read_at is None:
-            m.read_at = now()
-    db.commit()
+    unread = [m.id for m in msgs if m.sender_role == "patient" and m.read_at is None]
+    if unread:
+        t = now()
+        defer_write(db, lambda w: w.execute(update(Message).where(Message.id.in_(unread)).values(read_at=t)))
     return [services.message_dict(m) for m in msgs]
 
 
@@ -560,9 +560,9 @@ def fhir_export(pid: int, request: Request, user: User = Depends(doctor_only), d
 
 
 @router.get("/stream")
-async def stream(ticket: str, db: Session = Depends(get_db)):
+async def stream(ticket: str, request: Request, last_event_id: int | None = None, db: Session = Depends(get_db)):
     user = auth.redeem_ticket(ticket, db)
     if user.role != "doctor":
         raise HTTPException(403, "Недостаточно прав")
     db.close()
-    return sse(doctor_channel(user.id))
+    return sse(doctor_channel(user.id), _last_id(request, last_event_id))

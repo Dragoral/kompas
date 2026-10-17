@@ -9,26 +9,51 @@ from datetime import timedelta
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy import delete, select
+import uuid
 
-from . import auth
+from sqlalchemy import delete, select, update
+from sqlalchemy.exc import IntegrityError, OperationalError
+
+import os
+
+from . import auth, backup
 from .api import admin, doctor, metrics, patient
 from .api import auth as auth_api
+from . import bus as bus_mod
 from .bus import bus, doctor_channel
 from .config import BASE_DIR, CORS_ORIGINS, ESCALATION_CHECK_SEC
 from .crypto import vault
-from .db import Base, SessionLocal, engine
+from .db import Base, SessionLocal, WriteSession, engine
 from .engine import alerts, knowledge
-from .models import Alert, Message, Patient, User, now
+from .models import Alert, Event, Lease, Message, Patient, StreamTicket, User, now
 
 log = logging.getLogger("kompas")
 RETENTION_MESSAGES_DAYS = 365  # сопутствующие материалы — 1 год (193н п. 51)
+HOLDER = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+
+
+def holds_lease(name: str, ttl_sec: int = 90) -> bool:
+    """При нескольких рабочих процессах фоновую задачу выполняет только держатель аренды."""
+    with WriteSession() as db:
+        t = now()
+        r = db.execute(update(Lease).where(Lease.name == name, (Lease.expires_at < t) | (Lease.holder == HOLDER))
+                       .values(holder=HOLDER, expires_at=t + timedelta(seconds=ttl_sec)))
+        if r.rowcount:
+            db.commit()
+            return True
+        try:
+            db.add(Lease(name=name, holder=HOLDER, expires_at=t + timedelta(seconds=ttl_sec)))
+            db.commit()
+            return True
+        except IntegrityError:
+            db.rollback()
+            return False
 
 
 def escalate_once() -> int:
     """Критический алерт без подтверждения дольше порога -> дежурному врачу (193н п. 44, 46 «л»)."""
     n = 0
-    with SessionLocal() as db:
+    with WriteSession() as db:
         t = now()
         pending = db.scalars(select(Alert).where(Alert.status == "new", Alert.escalate_after_min.is_not(None),
                                                  Alert.escalated_to.is_(None))).all()
@@ -40,17 +65,19 @@ def escalate_once() -> int:
                 continue
             a.escalated_to, a.escalated_at = duty.id, t
             auth.audit(db, None, "alert_escalated", "alert", a.id, patient_id=a.patient_id, to_user=duty.id)
+            bus_mod.enqueue(db, doctor_channel(duty.id), "alert", {**alerts.alert_event(a), "escalated": True})
             db.commit()
-            bus.publish(doctor_channel(duty.id), "alert", {**alerts.alert_dict(a, db.get(Patient, a.patient_id)), "escalated": True})
             n += 1
     return n
 
 
 def maintenance_once() -> None:
     auth.seal_audit()
-    with SessionLocal() as db:
+    with WriteSession() as db:
         t = now()
         db.execute(delete(Message).where(Message.created_at < t - timedelta(days=RETENTION_MESSAGES_DAYS)))
+        db.execute(delete(Event).where(Event.created_at < t - timedelta(days=2)))
+        db.execute(delete(StreamTicket).where(StreamTicket.expires_at < t))
         # Отзыв согласия: по истечении срока — крипто-шреддинг (152-ФЗ ст. 21 ч. 5)
         for p in db.scalars(select(Patient).where(Patient.erase_after.is_not(None), Patient.erase_after < t, Patient.erased_at.is_(None))):
             vault.shred(db, p.id)
@@ -66,10 +93,16 @@ def maintenance_once() -> None:
             f.write(f"{now().isoformat()} {head}\n")
 
 
+def backup_once() -> None:
+    if os.getenv("DATABASE_URL", "sqlite").startswith("sqlite"):
+        backup.create()
+
+
 async def _loop(fn, period: float):
     while True:
         try:
-            await asyncio.to_thread(fn)
+            if await asyncio.to_thread(holds_lease, fn.__name__, int(period) + 60):
+                await asyncio.to_thread(fn)
         except Exception:
             log.exception("background task %s failed", fn.__name__)
         await asyncio.sleep(period)
@@ -78,14 +111,16 @@ async def _loop(fn, period: float):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(engine)
-    with SessionLocal() as db:
+    with WriteSession() as db:
         knowledge.seed(db)
-    bus.bind(asyncio.get_running_loop())
+    await bus.start()
     tasks = [asyncio.create_task(_loop(escalate_once, ESCALATION_CHECK_SEC)),
-             asyncio.create_task(_loop(maintenance_once, 60))]
+             asyncio.create_task(_loop(maintenance_once, 60)),
+             asyncio.create_task(_loop(backup_once, int(os.getenv("BACKUP_INTERVAL_MIN", "15")) * 60))]
     yield
     for t in tasks:
         t.cancel()
+    await bus.stop()
 
 
 app = FastAPI(title="Компас API", version="1.0", lifespan=lifespan)
@@ -109,6 +144,14 @@ async def envelope(request: Request, call_next):
     t0 = time.perf_counter()
     try:
         response = await call_next(request)
+    except OperationalError as e:
+        if "locked" not in str(e):
+            log.exception("db error on %s", request.url.path)
+            response = JSONResponse({"detail": "Внутренняя ошибка сервера"}, status_code=500)
+        else:
+            # Перегрузка записи: просим клиента повторить (офлайн-очередь PWA повторит запрос без дублей — client_id)
+            log.warning("write backpressure on %s", request.url.path)
+            response = JSONResponse({"detail": "Сервер перегружен, повторите запрос"}, status_code=503, headers={"Retry-After": "2"})
     except Exception:
         log.exception("unhandled error on %s", request.url.path)  # без тела запроса — в нём могут быть ПДн
         response = JSONResponse({"detail": "Внутренняя ошибка сервера"}, status_code=500)

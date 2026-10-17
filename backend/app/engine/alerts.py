@@ -12,7 +12,8 @@ from datetime import date, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..bus import bus, doctor_channel, patient_channel
+from .. import bus
+from ..bus import doctor_channel, patient_channel
 from ..models import Alert, ClinicalAction, Patient, ScaleAssignment, now
 from . import context, knowledge, logic, recommend
 
@@ -71,33 +72,26 @@ def process(db: Session, patient: Patient, trigger_ref: str, received_at: dateti
     _sync_referral(db, patient, ctx, kb)
     patient.risk_score = risk_score(ctx, open_alerts + created)
     db.flush()
-    db.info.setdefault("outbox_alerts", []).extend(a.id for a in created)
+    t = now()
+    for alert in created:  # события — в той же транзакции, что и данные (transactional outbox)
+        alert.pushed_at = t
+        bus.enqueue(db, doctor_channel(alert.doctor_id), "alert", alert_event(alert))
+        if any(_action_name(a) == "crisis_screen" for a in alert.actions):
+            bus.enqueue(db, patient_channel(patient.id), "crisis", {"alert_id": alert.id})
     return created
 
 
 def commit(db: Session) -> None:
-    """Фиксация транзакции, затем доставка событий (transactional outbox):
-    врач не получит алерт о данных, которые не сохранились."""
     db.commit()
-    ids = db.info.pop("outbox_alerts", [])
-    events = db.info.pop("outbox_events", [])
-    for channel, event, data in events:
-        bus.publish(channel, event, data)
-    if not ids:
-        return
-    for alert in db.scalars(select(Alert).where(Alert.id.in_(ids))):
-        patient = db.get(Patient, alert.patient_id)
-        alert.pushed_at = now()
-        bus.publish(doctor_channel(alert.doctor_id), "alert", alert_dict(alert, patient))
-        if alert.escalated_to:
-            bus.publish(doctor_channel(alert.escalated_to), "alert", alert_dict(alert, patient))
-        if any(_action_name(a) == "crisis_screen" for a in alert.actions):
-            bus.publish(patient_channel(patient.id), "crisis", {"alert_id": alert.id})
-    db.commit()
+
+
+def alert_event(a: Alert) -> dict:
+    """В очередь событий — только идентификаторы и тип; подробности клиент берёт по API с проверкой прав."""
+    return {"id": a.id, "patient_id": a.patient_id, "severity": a.severity, "rule_id": a.rule_id, "title": a.title}
 
 
 def emit(db: Session, channel: str, event: str, data: dict) -> None:
-    db.info.setdefault("outbox_events", []).append((channel, event, data))
+    bus.enqueue(db, channel, event, data)
 
 
 def _run_actions(db: Session, patient: Patient, alert: Alert, actions: list) -> None:
