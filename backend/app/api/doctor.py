@@ -1,0 +1,548 @@
+from __future__ import annotations
+
+import json
+import secrets
+from datetime import date, datetime, timedelta
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from .. import auth, services
+from ..bus import doctor_channel, patient_channel
+from ..crypto import vault
+from ..db import get_db
+from ..engine import alerts, context, extract, fhir, knowledge, recommend
+from ..models import (AdverseEvent, Alert, ClinicalAction, Document, Message, Patient, Prescription, ScaleAssignment,
+                      ScaleResult, User, now)
+from .patient import history_for, sse
+
+router = APIRouter(prefix="/api/doctor", tags=["doctor"])
+doctor_only = auth.require("doctor")
+
+
+def _p(user: User, patient_id: int, db: Session, request: Request | None = None, action: str = "view") -> Patient:
+    p = auth.patient_for(user, patient_id, db)
+    auth.audit(db, user, f"patient_{action}", "patient", p.id, patient_id=p.id, ip=auth.client_ip(request))
+    return p
+
+
+# --- список пациентов (автотриаж) --------------------------------------------
+@router.get("/patients")
+def list_patients(q: str | None = None, only_alerts: bool = False, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    stmt = select(Patient).where(Patient.doctor_id == user.id, Patient.erased_at.is_(None))
+    if q:
+        q = q.strip()
+        stmt = stmt.where((Patient.code == q.upper()) | (Patient.name_bidx == vault.blind_index(q)))
+    patients = db.scalars(stmt.order_by(Patient.risk_score.desc())).all()
+    ids = [p.id for p in patients]
+    open_alerts: dict[int, dict] = {}
+    for a in db.scalars(select(Alert).where(Alert.patient_id.in_(ids), Alert.status != "resolved")):
+        d = open_alerts.setdefault(a.patient_id, {"critical": 0, "high": 0, "medium": 0})
+        d[a.severity] = d.get(a.severity, 0) + 1
+    referrals = {a.patient_id: a.level for a in db.scalars(select(ClinicalAction).where(
+        ClinicalAction.patient_id.in_(ids), ClinicalAction.kind == "referral", ClinicalAction.status.in_(["proposed", "confirmed"])))}
+    pending = dict(db.execute(select(ClinicalAction.patient_id, func.count()).where(
+        ClinicalAction.patient_id.in_(ids), ClinicalAction.status == "proposed").group_by(ClinicalAction.patient_id)).all())
+    out = []
+    kb = knowledge.get(db)
+    for p in patients:
+        if only_alerts and p.id not in open_alerts:
+            continue
+        ctx = context.build(db, p)
+        rx = db.scalar(select(Prescription).where(Prescription.patient_id == p.id, Prescription.status == "active"))
+        out.append({
+            "id": p.id, "code": p.code, "full_name": p.full_name, "age": ctx["patient"]["age"], "sex": p.sex,
+            "diagnoses": p.diagnoses, "risk_score": p.risk_score, "monitoring_active": p.monitoring_active,
+            "therapy": rx and kb["drug"].get(rx.drug_id, {}).get("trade_name", rx.drug_id),
+            "scales": {k: {"score": v["score"], "band": v["band"], "severity": v["severity"], "delta": v["delta"]}
+                       for k, v in ctx["scales"].items()},
+            "adherence_pct": ctx["adherence"]["pct_14d"],
+            "alerts": open_alerts.get(p.id, {}), "referral": referrals.get(p.id), "pending_actions": pending.get(p.id, 0),
+            "last_diary_days": ctx["diary"]["days_since_last"],
+        })
+    db.commit()
+    return out
+
+
+# --- создание пациента -----------------------------------------------------
+class PatientIn(BaseModel):
+    full_name: str = Field(min_length=3, max_length=128)
+    birth_date: date
+    sex: str = Field(pattern="^(m|f)$")
+    phone: str | None = Field(None, max_length=32)
+    emergency_contact: str | None = Field(None, max_length=128)
+    profile: dict = Field(default_factory=dict)
+    diagnoses: list[dict] = Field(default_factory=list)
+    current_meds: list[dict] = Field(default_factory=list)
+    maoi_stopped_at: date | None = None
+    in_person_visit: bool = True  # пациент заводится на очном приёме
+
+
+def _code(db: Session) -> str:
+    while True:
+        c = "P-" + "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(6))
+        if not db.scalar(select(Patient.id).where(Patient.code == c)):
+            return c
+
+
+def _normalize_meds(db: Session, meds: list[dict]) -> list[dict]:
+    kb = knowledge.get(db)
+    out = []
+    for m in meds:
+        inn, classes = knowledge.classes_for(kb, m.get("inn") or m.get("name", ""))
+        out.append({**m, "inn": inn or m.get("inn"), "classes": m.get("classes") or classes})
+    return out
+
+
+@router.post("/patients")
+def create_patient(data: PatientIn, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    login = "p" + secrets.token_hex(3)
+    password = secrets.token_urlsafe(9)  # выдаётся пациенту один раз, смена при первом входе
+    pu = User(login=login, password_hash=auth.hash_password(password), role="patient", full_name="Пациент")
+    db.add(pu)
+    db.flush()
+    p = Patient(code=_code(db), user_id=pu.id, doctor_id=user.id, sex=data.sex, profile=data.profile,
+                diagnoses=data.diagnoses, current_meds=_normalize_meds(db, data.current_meds), maoi_stopped_at=data.maoi_stopped_at)
+    db.add(p)
+    db.flush()
+    p.full_name = data.full_name.strip()
+    p.birth_date = data.birth_date
+    p.contacts = json.dumps({"phone": data.phone, "emergency_contact": data.emergency_contact}, ensure_ascii=False)
+    p.name_bidx = vault.blind_index(data.full_name)
+    if data.in_person_visit:
+        p.in_person_visit_at, p.diagnosis_confirmed_by = now(), user.id
+    auth.audit(db, user, "patient_created", "patient", p.id, patient_id=p.id, ip=auth.client_ip(request))
+    alerts.process(db, p, f"created:{p.id}")
+    alerts.commit(db)
+    return {"id": p.id, "code": p.code, "login": login, "temporary_password": password}
+
+
+# --- карточка ----------------------------------------------------------------
+@router.get("/patients/{pid}")
+def card(pid: int, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    p = _p(user, pid, db, request)
+    kb = knowledge.get(db)
+    ctx = context.build(db, p)
+    rxs = db.scalars(select(Prescription).where(Prescription.patient_id == p.id).order_by(Prescription.started_at.desc())).all()
+    res = {
+        "patient": {
+            "id": p.id, "code": p.code, "full_name": p.full_name, "birth_date": p.birth_date, "age": ctx["patient"]["age"],
+            "sex": p.sex, "contacts": json.loads(p.contacts or "{}"), "profile": p.profile, "diagnoses": p.diagnoses,
+            "current_meds": p.current_meds, "maoi_stopped_at": p.maoi_stopped_at,
+            "in_person_visit_at": p.in_person_visit_at, "monitoring_active": p.monitoring_active,
+            "consent": {"at": p.consent_at, "version": p.consent_version, "withdrawn_at": p.consent_withdrawn_at},
+            "thresholds": ctx["thresholds"], "threshold_overrides": p.alert_thresholds,
+        },
+        "context": {k: ctx[k] for k in ("scales", "diary", "adherence", "therapy", "ae", "flags")},
+        "prescriptions": [{
+            "id": r.id, "drug_id": r.drug_id, "trade_name": kb["drug"].get(r.drug_id, {}).get("trade_name", r.drug_id),
+            "indication_id": r.indication_id, "regimen": r.regimen, "status": r.status, "off_label": r.off_label,
+            "mode": r.mode, "rationale": r.rationale, "started_at": r.started_at, "stopped_at": r.stopped_at,
+            "additional_monitoring": kb["drug"].get(r.drug_id, {}).get("additional_monitoring", False),
+        } for r in rxs],
+        "alerts": [alerts.alert_dict(a, p) for a in db.scalars(select(Alert).where(Alert.patient_id == p.id).order_by(Alert.created_at.desc()).limit(50))],
+        "actions": [action_dict(a) for a in db.scalars(select(ClinicalAction).where(ClinicalAction.patient_id == p.id).order_by(ClinicalAction.created_at.desc()))],
+        "adverse_events": [{"id": a.id, "title": a.title, "intensity": a.intensity, "serious": a.serious, "life_threatening": a.life_threatening,
+                            "expected": a.expected, "description": a.description, "status": a.status, "created_at": a.created_at}
+                           for a in db.scalars(select(AdverseEvent).where(AdverseEvent.patient_id == p.id).order_by(AdverseEvent.created_at.desc()))],
+        "assignments": [{"id": a.id, "scale_code": a.scale_code, "every_days": a.every_days, "next_due": a.next_due, "reason": a.reason}
+                        for a in db.scalars(select(ScaleAssignment).where(ScaleAssignment.patient_id == p.id, ScaleAssignment.active.is_(True)))],
+        "documents": [{"id": d.id, "filename": d.filename, "extractor": d.extractor, "applied": d.applied, "created_at": d.created_at}
+                      for d in db.scalars(select(Document).where(Document.patient_id == p.id).order_by(Document.created_at.desc()))],
+        "history": history_for(db, p.id, 180),
+    }
+    db.commit()
+    return res
+
+
+class PatientPatch(BaseModel):
+    profile: dict | None = None
+    diagnoses: list[dict] | None = None
+    current_meds: list[dict] | None = None
+    maoi_stopped_at: date | None = None
+    alert_thresholds: dict | None = None
+
+
+@router.patch("/patients/{pid}")
+def patch_patient(pid: int, data: PatientPatch, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    p = _p(user, pid, db, request, "update")
+    changed = data.model_dump(exclude_unset=True)
+    if "alert_thresholds" in changed:
+        allowed = context.thresholds(knowledge.get(db), Patient(alert_thresholds={}))
+        bad = [k for k, v in (data.alert_thresholds or {}).items() if k not in allowed or not isinstance(v, (int, float)) or v < 0]
+        if bad:
+            raise HTTPException(422, f"Недопустимые пороги: {bad}")
+    if "current_meds" in changed:
+        changed["current_meds"] = _normalize_meds(db, data.current_meds or [])
+    for k, v in changed.items():
+        setattr(p, k, v)
+    auth.audit(db, user, "patient_fields_changed", "patient", p.id, patient_id=p.id, fields=sorted(changed))
+    alerts.process(db, p, f"patch:{now().isoformat()}")
+    alerts.commit(db)
+    return {"ok": True}
+
+
+@router.post("/patients/{pid}/visit")
+def register_visit(pid: int, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    """Очный приём: основание для дистанционного наблюдения и дистанционной коррекции терапии (193н п. 38, 43)."""
+    p = _p(user, pid, db, request, "visit")
+    p.in_person_visit_at, p.diagnosis_confirmed_by = now(), user.id
+    db.commit()
+    return {"ok": True, "in_person_visit_at": p.in_person_visit_at}
+
+
+class MonitoringIn(BaseModel):
+    active: bool
+
+
+@router.post("/patients/{pid}/monitoring")
+def set_monitoring(pid: int, data: MonitoringIn, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    p = _p(user, pid, db, request, "monitoring")
+    if data.active and not p.in_person_visit_at:
+        raise HTTPException(409, "Дистанционное наблюдение назначается по результатам очного приёма (Приказ МЗ РФ № 193н, п. 43)")
+    p.monitoring_active = data.active
+    db.commit()
+    return {"ok": True}
+
+
+# --- рекомендации и назначения ---------------------------------------------
+@router.get("/patients/{pid}/recommendations")
+def recommendations(pid: int, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    p = _p(user, pid, db, request, "recommendations")
+    res = recommend.recommend(context.build(db, p), knowledge.get(db))
+    db.commit()
+    return res
+
+
+class PrescribeIn(BaseModel):
+    drug_id: str
+    indication_id: str | None = None
+    mode: str = Field("in_person", pattern="^(in_person|remote)$")
+    rationale: str | None = Field(None, max_length=2000)
+    acknowledge_off_label: bool = False
+    acknowledge_contraindications: bool = False
+
+
+@router.post("/patients/{pid}/prescriptions")
+def prescribe(pid: int, data: PrescribeIn, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    """Назначение — только явным действием врача. Система проверяет инструкцию:
+    вне показаний — требуется подтверждение и обоснование; противопоказания —
+    требуется отдельное подтверждение и обоснование (решение врача фиксируется)."""
+    p = _p(user, pid, db, request, "prescribe")
+    kb = knowledge.get(db)
+    drug = kb["drug"].get(data.drug_id)
+    if not drug:
+        raise HTTPException(404, "Препарат не найден в справочнике (рекомендуются только препараты, зарегистрированные в РФ)")
+    if data.mode == "remote" and not p.in_person_visit_at:
+        raise HTTPException(409, "Дистанционная коррекция терапии возможна только после установления диагноза на очном приёме (193н п. 38)")
+    ev = recommend.evaluate_drug(drug, context.build(db, p), kb)
+    if ev["status"] == "contraindicated" and not (data.acknowledge_contraindications and data.rationale and len(data.rationale) >= 20):
+        raise HTTPException(409, {"message": "Противопоказано по инструкции. Для назначения требуется подтверждение и обоснование врача.", "evaluation": ev})
+    if ev["status"] == "off_label" and not (data.acknowledge_off_label and data.rationale and len(data.rationale) >= 20):
+        raise HTTPException(409, {"message": "Нет зарегистрированного показания. Применение вне инструкции — только с обоснованием врача.", "evaluation": ev})
+    ind = next((i for i in drug["indications"] if i["id"] == (data.indication_id or (ev["indication"] or {}).get("id"))), None)
+    regimen = (ind or {}).get("regimen") or {"dose_mg": None, "times_per_day": 1}
+
+    for old in db.scalars(select(Prescription).where(Prescription.patient_id == p.id, Prescription.status.in_(["active", "paused"]))):
+        old.status, old.stopped_at = "stopped", now()
+    rx = Prescription(patient_id=p.id, drug_id=drug["id"], indication_id=ind and ind["id"], regimen=regimen,
+                      off_label=ev["status"] != "indicated", mode=data.mode, confirmed_by=user.id)
+    db.add(rx)
+    rx.rationale = data.rationale
+    db.flush()
+    services.schedule_doses(db, rx)
+    for s in (drug.get("monitoring") or {}).get("scales", []):
+        db.add(ScaleAssignment(patient_id=p.id, scale_code=s["scale"], every_days=s["every_days"], next_due=date.today(),
+                               reason=f"План мониторинга: {drug['trade_name']}"))
+    auth.audit(db, user, "prescription_confirmed", "prescription", rx.id, patient_id=p.id, drug=drug["id"],
+               status=ev["status"], mode=data.mode)
+    alerts.process(db, p, f"rx:{rx.id}")
+    alerts.commit(db)
+    return {"id": rx.id, "status": ev["status"], "regimen": regimen}
+
+
+class StopIn(BaseModel):
+    action: str = Field(pattern="^(stop|pause|resume)$")
+    reason: str | None = Field(None, max_length=2000)
+
+
+@router.post("/prescriptions/{rid}")
+def change_prescription(rid: int, data: StopIn, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    rx = db.get(Prescription, rid)
+    if not rx:
+        raise HTTPException(404, "Назначение не найдено")
+    p = _p(user, rx.patient_id, db, request, "prescription_change")
+    if not p.in_person_visit_at:
+        raise HTTPException(409, "Коррекция терапии возможна только после очного приёма (193н п. 38)")
+    rx.status = {"stop": "stopped", "pause": "paused", "resume": "active"}[data.action]
+    if data.action == "stop":
+        rx.stopped_at = now()
+    auth.audit(db, user, f"prescription_{data.action}", "prescription", rx.id, patient_id=p.id)
+    alerts.emit(db, patient_channel(p.id), "therapy_changed", {"prescription_id": rx.id})
+    alerts.commit(db)
+    return {"ok": True, "status": rx.status}
+
+
+# --- шкалы врача, назначения шкал ------------------------------------------
+@router.post("/patients/{pid}/scales")
+def clinician_scale(pid: int, data: services.ScaleIn, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    p = _p(user, pid, db, request, "scale_entry")
+    r, new = services.submit_scale(db, p, data, user, request.state.received_at)
+    alerts.commit(db)
+    return {"id": r.id, "score": r.score, "band": r.band, "alerts": len(new)}
+
+
+class AssignIn(BaseModel):
+    scale_code: str
+    every_days: int | None = Field(None, ge=1, le=365)
+    reason: str | None = Field(None, max_length=256)
+
+
+@router.post("/patients/{pid}/assignments")
+def assign_scale(pid: int, data: AssignIn, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    p = _p(user, pid, db, request, "assign_scale")
+    if data.scale_code not in knowledge.get(db)["scale"]:
+        raise HTTPException(404, "Шкала не найдена")
+    a = ScaleAssignment(patient_id=p.id, scale_code=data.scale_code, every_days=data.every_days, next_due=date.today(), reason=data.reason)
+    db.add(a)
+    db.commit()
+    return {"id": a.id}
+
+
+# --- сообщения -------------------------------------------------------------
+@router.get("/patients/{pid}/messages")
+def messages(pid: int, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    p = _p(user, pid, db, request, "messages")
+    msgs = db.scalars(select(Message).where(Message.patient_id == p.id).order_by(Message.created_at)).all()
+    for m in msgs:
+        if m.sender_role == "patient" and m.read_at is None:
+            m.read_at = now()
+    db.commit()
+    return [services.message_dict(m) for m in msgs]
+
+
+@router.post("/patients/{pid}/messages")
+def send(pid: int, data: services.MessageIn, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    p = _p(user, pid, db, request, "message")
+    m, _ = services.send_message(db, p, user, data, request.state.received_at)
+    alerts.commit(db)
+    return {"id": m.id}
+
+
+# --- алерты --------------------------------------------------------------
+@router.get("/alerts")
+def list_alerts(status: str = "open", user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    stmt = select(Alert).where((Alert.doctor_id == user.id) | (Alert.escalated_to == user.id))
+    if status == "open":
+        stmt = stmt.where(Alert.status != "resolved")
+    rank = {"critical": 0, "high": 1, "medium": 2}
+    items = db.scalars(stmt.order_by(Alert.created_at.desc()).limit(200)).all()
+    items.sort(key=lambda a: (rank.get(a.severity, 9), a.status != "new"))
+    return [alerts.alert_dict(a, db.get(Patient, a.patient_id)) for a in items]
+
+
+def _alert(user: User, aid: int, db: Session) -> Alert:
+    a = db.get(Alert, aid)
+    if not a or (a.doctor_id != user.id and a.escalated_to != user.id):
+        raise HTTPException(404, "Алерт не найден")
+    return a
+
+
+@router.post("/alerts/{aid}/delivered")
+def alert_delivered(aid: int, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    """Квитанция клиента о получении — документирование доставки (193н п. 46 «д»)."""
+    a = _alert(user, aid, db)
+    if a.delivered_at is None:
+        a.delivered_at = now()
+        db.commit()
+    return {"delivery_ms": round((a.delivered_at - a.data_received_at).total_seconds() * 1000)}
+
+
+@router.post("/alerts/{aid}/ack")
+def alert_ack(aid: int, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    a = _alert(user, aid, db)
+    if a.status == "new":
+        a.status, a.acknowledged_at, a.acknowledged_by = "acknowledged", now(), user.id
+        a.delivered_at = a.delivered_at or a.acknowledged_at
+        auth.audit(db, user, "alert_ack", "alert", a.id, patient_id=a.patient_id, ip=auth.client_ip(request))
+        db.commit()
+    return alerts.alert_dict(a)
+
+
+class ResolveIn(BaseModel):
+    resolution: str = Field(min_length=3, max_length=2000)
+
+
+@router.post("/alerts/{aid}/resolve")
+def alert_resolve(aid: int, data: ResolveIn, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    a = _alert(user, aid, db)
+    a.status = "resolved"
+    a.acknowledged_at = a.acknowledged_at or now()
+    a.resolution = data.resolution
+    auth.audit(db, user, "alert_resolved", "alert", a.id, patient_id=a.patient_id, ip=auth.client_ip(request))
+    p = db.get(Patient, a.patient_id)
+    alerts.process(db, p, f"resolve:{a.id}")  # пересчёт риска
+    alerts.commit(db)
+    return alerts.alert_dict(a)
+
+
+# --- очередь решений врача ---------------------------------------------------
+def action_dict(a: ClinicalAction) -> dict:
+    return {"id": a.id, "patient_id": a.patient_id, "kind": a.kind, "level": a.level, "title": a.title, "payload": a.payload,
+            "sources": a.sources, "status": a.status, "due_at": a.due_at, "alert_id": a.alert_id,
+            "decided_at": a.decided_at, "comment": a.comment, "created_at": a.created_at}
+
+
+@router.get("/actions")
+def list_actions(status: str = "proposed", user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    rows = db.execute(select(ClinicalAction, Patient).join(Patient, Patient.id == ClinicalAction.patient_id).where(
+        Patient.doctor_id == user.id, ClinicalAction.status == status).order_by(ClinicalAction.created_at.desc())).all()
+    return [{**action_dict(a), "patient_name": p.full_name} for a, p in rows]
+
+
+class DecideIn(BaseModel):
+    decision: str = Field(pattern="^(confirm|reject)$")
+    comment: str | None = Field(None, max_length=2000)
+
+
+@router.post("/actions/{aid}/decide")
+def decide(aid: int, data: DecideIn, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    a = db.get(ClinicalAction, aid)
+    if not a:
+        raise HTTPException(404, "Действие не найдено")
+    p = _p(user, a.patient_id, db, request, "decide")
+    if a.status != "proposed":
+        raise HTTPException(409, "Решение уже принято")
+    a.status = "confirmed" if data.decision == "confirm" else "rejected"
+    a.decided_by, a.decided_at = user.id, now()
+    a.comment = data.comment
+    if a.status == "confirmed" and a.kind == "hold_therapy":
+        for rx in db.scalars(select(Prescription).where(Prescription.patient_id == p.id, Prescription.status == "active")):
+            rx.status = "paused"
+        alerts.emit(db, patient_channel(p.id), "therapy_changed", {})
+    if a.status == "confirmed" and a.kind == "referral":
+        alerts.emit(db, patient_channel(p.id), "referral", {"level": a.level})
+    auth.audit(db, user, f"action_{a.status}", "clinical_action", a.id, patient_id=p.id, kind=a.kind, level=a.level)
+    alerts.commit(db)
+    return action_dict(a)
+
+
+@router.get("/actions/{aid}/pv-report")
+def pv_report(aid: int, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    """Черновик извещения о нежелательной реакции (Порядок фармаконадзора, приказ Росздравнадзора № 1071)."""
+    a = db.get(ClinicalAction, aid)
+    if not a or a.kind != "pv_report":
+        raise HTTPException(404, "Извещение не найдено")
+    p = _p(user, a.patient_id, db, request, "pv_report")
+    kb = knowledge.get(db)
+    ae = db.scalar(select(AdverseEvent).where(AdverseEvent.patient_id == p.id).order_by(AdverseEvent.created_at.desc()))
+    rx = db.get(Prescription, ae.prescription_id) if ae and ae.prescription_id else None
+    drug = kb["drug"].get(rx.drug_id, {}) if rx else {}
+    doctor = db.get(User, p.doctor_id)
+    severe = bool(ae and (ae.life_threatening or ae.serious))
+    known_at = ae.created_at if ae else a.created_at
+    db.commit()
+    return {
+        "form": "Извещение о нежелательной реакции или отсутствии терапевтического эффекта лекарственного препарата",
+        "deadline": (services.add_business_days(known_at, 3) if ae and ae.life_threatening else known_at + timedelta(days=15)),
+        "deadline_rule": "Серьёзные НР с угрозой жизни/летальным исходом — не более 3 рабочих дней; прочие — не более 15 календарных дней (Порядок № 1071, п. 36)",
+        "patient": {"code": p.code, "sex": p.sex, "age": context.age(p.birth_date)},  # обезличено
+        "suspected_drug": drug and {"trade_name": drug.get("trade_name"), "inn": drug.get("inn"),
+                                    "registration": drug.get("registration"), "regimen": rx.regimen, "started_at": rx.started_at},
+        "concomitant": p.current_meds,
+        "reaction": ae and {"title": ae.title, "intensity": ae.intensity, "serious": ae.serious, "life_threatening": ae.life_threatening,
+                            "expected_by_instruction": ae.expected, "onset": ae.created_at, "description": ae.description},
+        "additional_monitoring": drug.get("additional_monitoring", False),
+        "reporter": {"full_name": doctor.full_name, "specialty": doctor.specialty},
+        "submit_to": "АИС Росздравнадзора (подсистема «Фармаконадзор»)",
+        "severe": severe,
+    }
+
+
+# --- документы: извлечение данных из истории болезни ----------------------------
+class DocumentIn(BaseModel):
+    filename: str = Field(max_length=256)
+    text: str = Field(min_length=10, max_length=200_000)
+
+
+@router.post("/patients/{pid}/documents")
+def upload_document(pid: int, data: DocumentIn, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    p = _p(user, pid, db, request, "document_upload")
+    result = extract.extract(data.text, knowledge.get(db))
+    d = Document(patient_id=p.id, filename=data.filename, extracted=result["data"], extractor=result["extractor"],
+                 extraction_ms=result["elapsed_ms"], uploaded_by=user.id)
+    db.add(d)
+    d.text = data.text
+    db.commit()
+    return {"id": d.id, **result}
+
+
+@router.post("/documents/{did}/apply")
+def apply_document(did: int, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    """Врач проверил извлечённые данные и переносит их в карточку."""
+    d = db.get(Document, did)
+    if not d:
+        raise HTTPException(404, "Документ не найден")
+    p = _p(user, d.patient_id, db, request, "document_apply")
+    ex = d.extracted
+    known = {x["icd10"] for x in p.diagnoses}
+    p.diagnoses = p.diagnoses + [x for x in ex.get("diagnoses", []) if x["icd10"] not in known]
+    known_m = {(m.get("inn") or m.get("name")) for m in p.current_meds}
+    p.current_meds = p.current_meds + [m for m in _normalize_meds(db, ex.get("medications", [])) if (m.get("inn") or m.get("name")) not in known_m]
+    prof = dict(p.profile)
+    for k in ("conditions", "allergies"):
+        prof[k] = sorted(set(prof.get(k, [])) | set(ex.get(k, [])))
+    for k in ("egfr", "child_pugh", "pregnant", "post_covid"):
+        if ex.get(k) is not None:
+            prof[k] = ex[k]
+    p.profile = prof
+    d.applied = True
+    auth.audit(db, user, "document_applied", "document", d.id, patient_id=p.id)
+    alerts.process(db, p, f"doc:{d.id}")
+    alerts.commit(db)
+    return {"ok": True}
+
+
+# --- сводка перед визитом, FHIR --------------------------------------------
+@router.get("/patients/{pid}/summary")
+def summary(pid: int, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    p = _p(user, pid, db, request, "summary")
+    ctx = context.build(db, p)
+    kb = knowledge.get(db)
+    lines = []
+    for code, v in ctx["scales"].items():
+        title = kb["scale"].get(code, {}).get("title", code).split(" — ")[0]
+        trend = "" if v["delta"] is None else f" ({'+' if v['delta'] > 0 else ''}{v['delta']} к прошлой)"
+        base = "" if v["change_from_baseline_pct"] is None else f", {v['change_from_baseline_pct']}% от исходного"
+        lines.append(f"{title}: {v['score']} — {v['band'].lower()}{trend}{base}")
+    if ctx["therapy"]["active_drugs"]:
+        lines.append(f"Терапия: {', '.join(kb['drug'][d]['trade_name'] for d in ctx['therapy']['active_drugs'])}, "
+                     f"{ctx['therapy']['weeks_on_current']} нед.")
+    if ctx["adherence"]["pct_14d"] is not None:
+        lines.append(f"Приверженность за 14 дней: {ctx['adherence']['pct_14d']}%")
+    if ctx["diary"]["mood_avg_7d"] is not None:
+        lines.append(f"Дневник (7 дн.): настроение {ctx['diary']['mood_avg_7d']}/10, тревога {ctx['diary']['anxiety_avg_7d']}/10, "
+                     f"сон {ctx['diary']['sleep_avg_7d']} ч")
+    if ctx["ae"]["open_count"]:
+        lines.append(f"Нежелательные явления: {ctx['ae']['open_count']} (последнее — {ctx['ae']['last_title']})")
+    db.commit()
+    return {"text": "\n".join(lines), "generated": "по данным наблюдения, без ИИ"}
+
+
+@router.get("/patients/{pid}/fhir")
+def fhir_export(pid: int, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    p = _p(user, pid, db, request, "fhir_export")
+    bundle = fhir.bundle(db, p)
+    db.commit()
+    return bundle
+
+
+@router.get("/stream")
+async def stream(ticket: str, db: Session = Depends(get_db)):
+    user = auth.redeem_ticket(ticket, db)
+    if user.role != "doctor":
+        raise HTTPException(403, "Недостаточно прав")
+    db.close()
+    return sse(doctor_channel(user.id))

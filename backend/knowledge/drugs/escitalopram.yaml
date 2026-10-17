@@ -8,6 +8,9 @@ pharm_group: Антидепрессант, СИОЗС
 classes: [ssri]
 additional_monitoring: false
 verified: false
+registration:
+  number: "сверить в ГРЛС (grls.rosminzdrav.ru)"
+  holder: "сверить в ГРЛС"
 
 sources:
   instruction: &instr

@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .bus import bus, doctor_channel, patient_channel
+from .bus import doctor_channel, patient_channel
 from .engine import alerts, knowledge, scales
 from .models import AdverseEvent, DiaryEntry, DoseLog, Message, Patient, Prescription, ScaleAssignment, ScaleResult, User, now
 
@@ -168,12 +168,11 @@ def send_message(db: Session, patient: Patient, user: User, data: MessageIn, rec
     m.text = data.text
     db.flush()
     new_alerts = alerts.process(db, patient, f"msg:{m.id}", received_at) if user.role == "patient" else []
-    db.commit()
     # В канал уходит только факт сообщения; текст клиент запрашивает по API.
     # Push/SMS не раскрывают содержание (Закон 3185-1, ст. 9).
     ev = {"id": m.id, "patient_id": patient.id, "sender_role": m.sender_role}
-    bus.publish(patient_channel(patient.id), "message", ev)
-    bus.publish(doctor_channel(patient.doctor_id), "message", ev)
+    alerts.emit(db, patient_channel(patient.id), "message", ev)
+    alerts.emit(db, doctor_channel(patient.doctor_id), "message", ev)
     return m, new_alerts
 
 

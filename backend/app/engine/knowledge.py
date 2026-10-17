@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import json
 import threading
 from pathlib import Path
 
@@ -28,7 +29,8 @@ def load_yaml_dir(root: Path = KNOWLEDGE_DIR) -> list[tuple[str, str, dict]]:
     items = []
     for sub, kind in KINDS.items():
         for f in sorted((root / sub).glob("*.yaml")):
-            body = yaml.safe_load(f.read_text(encoding="utf-8"))
+            # JSON-нормализация: даты и прочие YAML-типы -> строки
+            body = json.loads(json.dumps(yaml.safe_load(f.read_text(encoding="utf-8")), default=str, ensure_ascii=False))
             if f.stem == "drug_classes":
                 items.append(("dictionary", "drug_classes", body))
                 continue
