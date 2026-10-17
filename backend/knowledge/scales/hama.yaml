@@ -29,7 +29,11 @@ items:
   - { n: 12, text: "Мочеполовые симптомы", options: *opts }
   - { n: 13, text: "Вегетативные симптомы", options: *opts }
   - { n: 14, text: "Поведение при осмотре", options: *opts }
-scoring: { method: sum, min: 0, max: 56 }
+scoring:
+  method: sum
+  subscales:
+    psychic: { title: "Психическая тревога", items: [1, 2, 3, 4, 5, 6, 14] }
+    somatic: { title: "Соматическая тревога", items: [7, 8, 9, 10, 11, 12, 13] }
 bands:
   - { min: 0, max: 7, label: Нет тревоги / ремиссия, severity: 0 }
   - { min: 8, max: 17, label: Лёгкая, severity: 1 }

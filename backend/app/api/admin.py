@@ -67,16 +67,11 @@ class ProposeIn(BaseModel):
 
 @router.put("/knowledge/{kind}/{code}")
 def propose(kind: str, code: str, data: ProposeIn, request: Request, user: User = Depends(admin_only), db: Session = Depends(get_db)):
-    """Предложить изменение. В действие вступает только после клинического одобрения."""
+    """Предложить изменение (то же, что PUT /api/knowledge/{kind}/{code}). Вступает в силу после одобрения."""
+    from .knowledge import ProposeIn as KP, propose_change
     if kind not in KINDS:
         raise HTTPException(422, f"Тип справочника: {sorted(KINDS)}")
-    try:
-        v = knowledge.propose(db, kind, code, data.body, user.id, data.change_note)
-    except (ValueError, KeyError, TypeError) as e:
-        raise HTTPException(422, f"Справочник не прошёл проверку: {e}")
-    auth.audit(db, user, "knowledge_proposed", "knowledge_version", v.id, ip=auth.client_ip(request), kind=kind, code=code)
-    db.commit()
-    return {"draft_id": v.id, "status": "draft", "note": "Изменение вступит в силу после одобрения врачом-рецензентом"}
+    return propose_change(db, user, kind, code, KP(body=data.body, change_note=data.change_note), auth.client_ip(request))
 
 
 class RollbackIn(BaseModel):
@@ -89,7 +84,10 @@ def rollback(kind: str, code: str, data: RollbackIn, user: User = Depends(admin_
     old = db.get(KnowledgeVersion, data.to_version_id)
     if not old or (old.kind, old.code) != (kind, code) or old.status not in ("approved", "superseded"):
         raise HTTPException(404, "Версия не найдена")
-    v = knowledge.propose(db, kind, code, old.body, user.id, f"Откат к версии {old.version}: {data.change_note}")
+    try:
+        v = knowledge.propose(db, kind, code, old.body, user.id, f"Откат к версии {old.version}: {data.change_note}")
+    except knowledge.KnowledgeError as e:
+        raise HTTPException(422, {"message": "Прежняя версия не проходит текущие проверки", "errors": e.errors})
     auth.audit(db, user, "knowledge_rollback_proposed", "knowledge_version", v.id, kind=kind, code=code, to_version=old.version)
     db.commit()
     return {"draft_id": v.id, "status": "draft"}
@@ -136,8 +134,8 @@ def decide(vid: int, data: DecideIn, request: Request, user: User = Depends(revi
     if data.decision == "approve":
         try:
             row = knowledge.approve(db, v, user.id, data.comment)
-        except (ValueError, KeyError, TypeError) as e:
-            raise HTTPException(422, f"Справочник не прошёл проверку: {e}")
+        except knowledge.KnowledgeError as e:
+            raise HTTPException(422, {"message": "Справочник не прошёл проверку", "errors": e.errors})
         result = {"status": "approved", "version": row.version}
     else:
         v.status, v.decided_by, v.decided_at, v.decision_comment = "rejected", user.id, now(), data.comment

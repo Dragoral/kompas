@@ -106,3 +106,20 @@ def safe_eval(rule: Any, ctx: dict, ref: str) -> bool:
         from ..observability import report_problem
         report_problem("rule", ref, f"{e.__class__.__name__}: {e}")
         return False
+
+
+def explain(rule: Any, ctx: dict) -> dict:
+    """Пошаговое объяснение вычисления условия: дерево {expr, value, args}.
+    Нужно, чтобы врач видел, почему правило сработало или нет."""
+    if not isinstance(rule, dict):
+        return {"expr": rule, "value": rule}
+    op, args = next(iter(rule.items()))
+    if op == "var":
+        path = args if isinstance(args, str) else args[0]
+        return {"expr": f"переменная {path}", "value": get_var(ctx, path)}
+    children = [explain(a, ctx) for a in (args if isinstance(args, list) else [args])]
+    try:
+        value = evaluate(rule, ctx)
+    except Exception as e:  # noqa: BLE001
+        value = f"ошибка: {e}"
+    return {"expr": op, "value": value, "args": children}

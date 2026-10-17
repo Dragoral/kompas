@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from . import errors, jobs, observability
-from .api import admin, analytics, doctor, metrics, patient, system
+from .api import admin, analytics, doctor, knowledge as knowledge_api, metrics, patient, system
 from .api import auth as auth_api
 from .bus import bus
 from .config import APP_ENV, CORS_ORIGINS, DOCS_ENABLED, LOG_DIR, LOG_LEVEL, MAX_BODY_BYTES, production_problems
@@ -115,5 +115,6 @@ async def request_context(request: Request, call_next):
         observability.user_id_var.reset(uid_token)
 
 
-for r in (system.router, auth_api.router, patient.router, doctor.router, admin.router, admin.review, analytics.router, metrics.router):
+for r in (system.router, auth_api.router, patient.router, doctor.router, knowledge_api.router, admin.router, admin.review,
+          analytics.router, metrics.router):
     app.include_router(r)

@@ -92,46 +92,26 @@ def approve(db: Session, v: KnowledgeVersion, reviewer_id: int, comment: str | N
     return row
 
 
-def validate(kind: str, body: dict) -> None:
-    """Проверка структуры перед сохранением — некорректное правило не попадёт в работу."""
-    def need(*keys):
-        missing = [k for k in keys if k not in body]
-        if missing:
-            raise ValueError(f"{kind}: отсутствуют поля {missing}")
+class KnowledgeError(ValueError):
+    """Справочник не прошёл проверку: errors — список {path, message}."""
 
-    if kind == "scale":
-        need("code", "title", "items", "bands", "respondent", "license", "validation")
-        for it in body["items"]:
-            if "n" not in it or "text" not in it or not it.get("options"):
-                raise ValueError(f"Шкала {body['code']}: у пункта нет n/text/options")
-    elif kind == "drug":
-        need("id", "trade_name", "inn", "indications", "registration", "sources")
-        for c in body.get("contraindications", []) + body.get("cautions", []):
-            logic.validate(c["when"])
-        for ind in body["indications"]:
-            if "requires" in ind:
-                logic.validate(ind["requires"])
-    elif kind == "guideline":
-        need("code", "id", "title", "icd10", "status", "url", "theses", "published")
-        for k, t in body["theses"].items():
-            if "text" not in t or "section" not in t:
-                raise ValueError(f"КР {body['code']}: тезис {k} без text/section")
-        for ln in (body.get("lines") or {}).values():
-            if ln.get("thesis") and ln["thesis"] not in body["theses"]:
-                raise ValueError(f"КР {body['code']}: линия ссылается на несуществующий тезис {ln['thesis']}")
-    elif kind == "rules":
-        need("rules")
-        if "applies_when" in body:
-            logic.validate(body["applies_when"])
-        for cond in (body.get("applies") or {}).values():
-            logic.validate(cond)
-        for r in body["rules"]:
-            if "applies" in r and r["applies"] not in (body.get("applies") or {}):
-                raise ValueError(f"Правило {r.get('id')}: неизвестная область применения {r['applies']}")
-        for r in body["rules"]:
-            if "id" not in r or "when" not in r:
-                raise ValueError("Правило без id/when")
-            logic.validate(r["when"])
+    def __init__(self, errors: list[dict], warnings: list[dict] | None = None):
+        self.errors, self.warnings = errors, warnings or []
+        super().__init__("; ".join(f"{e['path']}: {e['message']}" for e in errors[:5]))
+
+
+def check(kind: str, body: dict) -> tuple[list[dict], list[dict]]:
+    from . import schemas
+    return schemas.check(kind, body)
+
+
+def validate(kind: str, body: dict) -> list[dict]:
+    """Проверка структуры и смысла перед сохранением — некорректный справочник не попадёт
+    в работу. Возвращает предупреждения; при ошибках — KnowledgeError."""
+    errors, warnings = check(kind, body)
+    if errors:
+        raise KnowledgeError(errors, warnings)
+    return warnings
 
 
 def invalidate() -> None:

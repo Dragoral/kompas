@@ -85,6 +85,7 @@ def build(db: Session, patient: Patient, at: datetime | None = None) -> dict:
             "band": last.band,
             "severity": last.severity,
             "items": {str(k): v for k, v in last.answers.items()},
+            "subscales": {k: v.get("score") for k, v in ((last.details or {}).get("subscales") or {}).items()},
             "prev_score": prev.score if prev else None,
             "delta": (last.score - prev.score) if prev else None,
             "baseline": base.score,

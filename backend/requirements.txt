@@ -10,3 +10,4 @@ httpx==0.28.1
 python-multipart==0.0.12
 pytest==8.3.3
 psycopg[binary]==3.2.3
+jsonschema==4.23.0

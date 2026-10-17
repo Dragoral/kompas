@@ -53,8 +53,9 @@ def answers_for(scale: dict, total: int, critical: dict | None = None) -> dict:
 def add_scale(db, kb, p: Patient, code: str, total: int, at: datetime, by: User, critical: dict | None = None):
     sc = kb["scale"][code]
     ans = answers_for(sc, total, critical)
-    score, band = scales.score(sc, ans)
-    db.add(ScaleResult(patient_id=p.id, scale_code=code, answers=ans, score=score, band=band["label"], severity=band["severity"],
+    res = scales.evaluate(sc, ans)
+    db.add(ScaleResult(patient_id=p.id, scale_code=code, answers=res["answers"], score=res["score"], band=res["band"],
+                       severity=res["severity"], details={"subscales": res["subscales"], "critical_items": res["critical_items"]},
                        respondent=sc["respondent"], entered_by=by.id, created_at=at, received_at=at))
 
 

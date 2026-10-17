@@ -1,0 +1,84 @@
+"""Каталог переменных контекста пациента, доступных в условиях правил
+(алертинг, маршрутизация, противопоказания). Это контракт между ядром и
+справочниками: правило может ссылаться только на переменные из каталога —
+опечатка в имени переменной обнаруживается при сохранении, а не в работе.
+
+«*» — любой сегмент: код шкалы (PHQ9, GAD7, …), номер пункта, имя подшкалы.
+Новая переменная добавляется в context.build и сюда — одной строкой.
+"""
+from __future__ import annotations
+
+import re
+
+VARIABLES: list[tuple[str, str, str]] = [
+    # путь, тип, описание
+    ("patient.age", "число", "Возраст, лет"),
+    ("patient.sex", "строка", "Пол: m | f"),
+    ("patient.pregnant", "да/нет", "Беременность"),
+    ("patient.lactating", "да/нет", "Грудное вскармливание"),
+    ("patient.egfr", "число", "СКФ, мл/мин/1,73 м²"),
+    ("patient.child_pugh", "строка", "Класс печёночной недостаточности по Чайлд–Пью: A | B | C"),
+    ("patient.conditions", "список", "Состояния: из профиля и из кодов МКБ-10 (справочник icd_conditions)"),
+    ("patient.allergies", "список", "Аллергии и непереносимости"),
+    ("patient.post_covid", "да/нет", "Перенесённая COVID-19"),
+    ("patient.drives_professionally", "да/нет", "Профессиональное вождение / работа с механизмами"),
+    ("patient.psychotherapy", "строка", "Получаемая психотерапия (пусто — не получает)"),
+    ("patient.icd10", "список", "Коды диагнозов МКБ-10"),
+    ("doctor.specialty", "строка", "Специальность лечащего врача: psychiatrist | therapist | …"),
+    ("meds.classes", "список", "Фармакологические классы текущей сопутствующей терапии"),
+    ("meds.maoi_stopped_days_ago", "число", "Дней с отмены ингибиторов МАО"),
+    ("scales.*.score", "число", "Последний общий балл шкалы"),
+    ("scales.*.band", "строка", "Градация последнего результата"),
+    ("scales.*.severity", "число", "Уровень тяжести градации (0 — норма)"),
+    ("scales.*.items.*", "число", "Ответ на пункт последнего результата"),
+    ("scales.*.subscales.*", "число", "Балл подшкалы последнего результата"),
+    ("scales.*.prev_score", "число", "Предыдущий общий балл"),
+    ("scales.*.delta", "число", "Изменение балла к предыдущему результату"),
+    ("scales.*.baseline", "число", "Исходный балл (до начала текущей терапии)"),
+    ("scales.*.change_from_baseline_pct", "число", "Изменение от исходного, %"),
+    ("scales.*.days_ago", "число", "Дней с последнего результата"),
+    ("scales.*.count", "число", "Число результатов шкалы"),
+    ("diary.days_since_last", "число", "Дней с последней записи дневника"),
+    ("diary.mood_avg_7d", "число", "Среднее настроение за 7 дней (0–10)"),
+    ("diary.anxiety_avg_7d", "число", "Средняя тревога за 7 дней (0–10)"),
+    ("diary.sleep_avg_7d", "число", "Средняя длительность сна за 7 дней, ч"),
+    ("therapy.active_drugs", "список", "Действующие назначения (id препаратов)"),
+    ("therapy.weeks_on_current", "число", "Недель на текущей терапии"),
+    ("adherence.pct_14d", "число", "Приверженность приёму препарата за 14 дней, %"),
+    ("adherence.missed_streak", "число", "Пропущено приёмов подряд"),
+    ("adherence.diary_pct", "число", "Заполнение дневника, % дней"),
+    ("adherence.scales_overdue", "список", "Просроченные назначенные шкалы"),
+    ("adherence.overall_pct", "число", "Общая приверженность рекомендациям, %"),
+    ("ae.open_count", "число", "Открытых нежелательных явлений"),
+    ("ae.serious_open", "да/нет", "Есть открытое серьёзное НЯ"),
+    ("ae.last_title", "строка", "Последнее НЯ"),
+    ("flags.self_harm_text", "да/нет", "В дневнике/чате найдены высказывания о самоповреждении"),
+    ("thresholds.*", "число", "Порог алертинга (по умолчанию из правил или индивидуальный для пациента)"),
+    ("monitoring.active", "да/нет", "Дистанционное наблюдение активно"),
+    ("monitoring.in_person_visit", "да/нет", "Был очный приём"),
+]
+
+_PATTERNS = [(re.compile("^" + re.escape(p).replace(r"\*", r"[A-Za-z0-9_]+") + "$"), p) for p, _, _ in VARIABLES]
+
+
+def known(path: str) -> bool:
+    return any(rx.match(path) for rx, _ in _PATTERNS)
+
+
+def catalogue() -> list[dict]:
+    return [{"path": p, "type": t, "description": d} for p, t, d in VARIABLES]
+
+
+def referenced(rule) -> list[str]:
+    """Все переменные, на которые ссылается условие JSON-logic."""
+    out: list[str] = []
+    if isinstance(rule, dict):
+        for op, args in rule.items():
+            if op == "var":
+                out.append(args if isinstance(args, str) else args[0])
+            else:
+                out += referenced(args)
+    elif isinstance(rule, list):
+        for x in rule:
+            out += referenced(x)
+    return out

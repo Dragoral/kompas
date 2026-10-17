@@ -99,22 +99,53 @@ def emit(db: Session, channel: str, event: str, data: dict) -> None:
     bus.enqueue(db, channel, event, data)
 
 
+# --- реестр действий алертов -------------------------------------------------------
+# Действие = функция (db, patient, alert, arg). Новое действие добавляется сюда одной
+# функцией, после чего его можно использовать в правилах (справочник rules/alerts).
+# notify_doctor, crisis_screen, escalate выполняются ядром (события, оповещения, эскалация).
+
+def _propose(kind: str, title: str):
+    def act(db: Session, patient: Patient, alert: Alert, arg) -> None:
+        dup = db.scalar(select(ClinicalAction).where(ClinicalAction.patient_id == patient.id, ClinicalAction.kind == kind,
+                                                     ClinicalAction.status == "proposed"))
+        if dup:
+            return
+        # в payload — только ссылка на алерт: его сообщение может цитировать пациента и хранится зашифрованным
+        db.add(ClinicalAction(patient_id=patient.id, kind=kind, title=f"{title}: {alert.title}", alert_id=alert.id,
+                              payload={"alert_id": alert.id, "rule_id": alert.rule_id},
+                              sources=[alert.source] if alert.source else []))
+    return act
+
+
+def _request_scale(db: Session, patient: Patient, alert: Alert, arg) -> None:
+    db.add(ScaleAssignment(patient_id=patient.id, scale_code=arg, every_days=None, next_due=date.today(),
+                           reason=f"Внеплановая оценка: {alert.title}"))
+
+
+def _core(db, patient, alert, arg) -> None:
+    """Выполняется ядром при создании алерта (см. process)."""
+
+
+ACTIONS = {
+    "notify_doctor": _core,
+    "crisis_screen": _core,
+    "escalate": _core,
+    "request_scale": _request_scale,
+    "propose_visit": _propose("visit", "Внеплановый визит"),
+    "propose_hold_therapy": _propose("hold_therapy", "Приостановить терапию до осмотра"),
+    "pharmacovigilance_draft": _propose("pv_report", "Сообщение о нежелательной реакции (Росздравнадзор)"),
+}
+
+
 def _run_actions(db: Session, patient: Patient, alert: Alert, actions: list) -> None:
     for a in actions:
         name, arg = _action_name(a), _action_arg(a)
-        if name == "request_scale":
-            db.add(ScaleAssignment(patient_id=patient.id, scale_code=arg, every_days=None, next_due=date.today(),
-                                   reason=f"Внеплановая оценка: {alert.title}"))
-        elif name in ("propose_visit", "propose_hold_therapy", "pharmacovigilance_draft"):
-            kind = {"propose_visit": "visit", "propose_hold_therapy": "hold_therapy", "pharmacovigilance_draft": "pv_report"}[name]
-            dup = db.scalar(select(ClinicalAction).where(ClinicalAction.patient_id == patient.id, ClinicalAction.kind == kind,
-                                                         ClinicalAction.status == "proposed"))
-            if dup:
-                continue
-            title = {"visit": "Внеплановый визит", "hold_therapy": "Приостановить терапию до осмотра",
-                     "pv_report": "Извещение о нежелательной реакции (Росздравнадзор)"}[kind]
-            db.add(ClinicalAction(patient_id=patient.id, kind=kind, title=f"{title}: {alert.title}", alert_id=alert.id,
-                                  payload={"reason": alert.message}, sources=[alert.source] if alert.source else []))
+        fn = ACTIONS.get(name)
+        if fn is None:
+            from ..observability import report_problem
+            report_problem("alert_action", f"{alert.rule_id}:{name}", "неизвестное действие — пропущено")
+            continue
+        fn(db, patient, alert, arg)
 
 
 def _sync_referral(db: Session, patient: Patient, ctx: dict, kb: dict) -> None:

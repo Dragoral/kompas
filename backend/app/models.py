@@ -204,7 +204,8 @@ class ScaleResult(Base):
     scale_code: Mapped[str] = mapped_column(String(32))
     scale_version: Mapped[int] = mapped_column(Integer, default=1)
     answers: Mapped[dict] = mapped_column(JSON)  # {"1": 2, "2": 0, ...}
-    score: Mapped[int] = mapped_column(Integer)
+    score: Mapped[float] = mapped_column(Float)
+    details: Mapped[dict] = mapped_column(JSON, default=dict)  # подшкалы, критические пункты
     band: Mapped[str] = mapped_column(String(64))
     severity: Mapped[int] = mapped_column(Integer)
     respondent: Mapped[str] = mapped_column(String(16))  # patient | clinician

@@ -22,7 +22,7 @@ from .models import AdverseEvent, DiaryEntry, DoseLog, Message, Patient, Prescri
 
 class ScaleIn(BaseModel):
     scale_code: str = Field(max_length=32)
-    answers: dict[str, int]
+    answers: dict[str, float]
     client_id: str | None = Field(None, max_length=64)
     taken_at: datetime | None = None  # время заполнения на устройстве (офлайн)
 
@@ -84,13 +84,14 @@ def submit_scale(db: Session, patient: Patient, data: ScaleIn, user: User, recei
     if scale["respondent"] == "clinician" and user.role != "doctor":
         raise HTTPException(403, "Шкала заполняется врачом")
     try:
-        total, band = scales.score(scale, data.answers)
+        res = scales.evaluate(scale, data.answers)
     except ValueError as e:
         raise HTTPException(422, str(e))
     taken_at = min(data.taken_at, received_at) if data.taken_at else received_at  # не из будущего
     r = ScaleResult(patient_id=patient.id, scale_code=data.scale_code, scale_version=kb["versions"].get(("scale", data.scale_code), 1),
-                    answers={str(k): v for k, v in data.answers.items()}, score=total, band=band["label"],
-                    severity=band.get("severity", 0), respondent=scale["respondent"], entered_by=user.id,
+                    answers=res["answers"], score=res["score"], band=res["band"], severity=res["severity"],
+                    details={"subscales": res["subscales"], "critical_items": res["critical_items"]},
+                    respondent=scale["respondent"], entered_by=user.id,
                     client_id=data.client_id, created_at=taken_at, received_at=received_at)
     db.add(r)
     # закрыть разовые назначения шкалы, сдвинуть периодические
