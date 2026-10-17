@@ -136,11 +136,16 @@ def recommend(ctx: dict, kb: dict, drug_ids: list[str] | None = None) -> dict:
     # Порядок: статус по инструкции -> соответствие этапу по КР и номер линии -> анамнез -> название.
     # Никаких предпочтений отдельным препаратам.
     def kr_rank(d):
-        pos = d["guideline_positions"]
-        if not pos:
-            return (1, 9)
-        best = min(pos, key=lambda x: ({"consistent": 0, "earlier_lines_first": 1}.get(x["status"], 2), x.get("line") or 9))
-        return ({"consistent": 0, "earlier_lines_first": 1}.get(best["status"], 2), best.get("line") or 9)
+        # сначала препараты текущего этапа терапии по КР, затем предыдущих этапов, затем — более поздних
+        ranks = []
+        for x in d["guideline_positions"]:
+            if x["status"] == "consistent":
+                ranks.append((0, x["reached"] - x["line"]))
+            elif x["status"] == "earlier_lines_first":
+                ranks.append((1, x["line"]))
+            else:
+                ranks.append((2, 9))
+        return min(ranks) if ranks else (2, 9)
     drugs.sort(key=lambda d: (order[d["status"]], kr_rank(d), failed_before(d), d["trade_name"]))
     return {
         "drugs": drugs,

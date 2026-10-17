@@ -55,7 +55,7 @@ def drug_position(drug: dict, kb: dict, ctx: dict) -> list[dict]:
         reached = line_reached(g, ctx)["line"]
         ref = _ref(g, lines[n]["thesis"])
         if n <= reached:
-            out.append({"guideline": g["code"], "status": "consistent", "line": n, "ref": ref,
+            out.append({"guideline": g["code"], "status": "consistent", "line": n, "reached": reached, "ref": ref,
                         "note": f"Соответствует этапу терапии по КР ({lines[n]['title'].lower()})"})
         else:
             need = ", ".join(lines[k]["title"].lower() for k in range(1, n) if k in lines)

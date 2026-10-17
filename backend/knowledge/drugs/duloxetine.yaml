@@ -1,0 +1,58 @@
+# Дулоксетин — по инструкции Симбалта (РУ ЛП-№(002221)-(РГ-RU)).
+id: duloxetine
+trade_name: Дулоксетин (Симбалта)
+inn: дулоксетин
+atc: N06AX21
+pharm_group: Антидепрессант, СИОЗСН
+classes: [snri, cyp2d6_inhibitor]
+additional_monitoring: false
+verified: false   # по копии ИМП (Видаль); сверить с ГРЛС
+registration: { number: "ЛП-№(002221)-(РГ-RU)", date: "2023-04-20", holder: "СВИКС ХЭЛСКЕА, ООО" }
+sources:
+  instruction: { title: "Инструкция по медицинскому применению ЛП Симбалта, ЛП-№(002221)-(РГ-RU)", url: "https://www.vidal.ru/drugs/cymbalta__14675" }
+
+indications:
+  - id: depression
+    title: Депрессия
+    icd10: [F32, F33]
+    regimen: { dose_mg: 60, times_per_day: 1, daily_mg: 60, max_daily_mg: 120, timing: "1 раз в сутки; до 120 мг в 2 приёма", duration: "длительно" }
+  - id: gad
+    title: Генерализованное тревожное расстройство
+    icd10: [F41.1]
+    regimen: { dose_mg: 60, times_per_day: 1, daily_mg: 60, max_daily_mg: 120, timing: "1 раз в сутки; до 120 мг в 2 приёма", duration: "длительно" }
+
+contraindications:
+  - { id: glaucoma, title: "Некомпенсированная закрытоугольная глаукома", when: { in: ["angle_closure_glaucoma", { var: patient.conditions }] } }
+  - { id: hepatic, title: "Заболевания печени с печёночной недостаточностью", when: { or: [{ in: [{ var: patient.child_pugh }, ["A", "B", "C"]] }, { in: ["liver_disease", { var: patient.conditions }] }] } }
+  - { id: renal, title: "Почечная недостаточность тяжёлой степени (КК < 30 мл/мин)", when: { "<": [{ var: patient.egfr }, 30] } }
+  - { id: uncontrolled_htn, title: "Неконтролируемая артериальная гипертензия", when: { in: ["uncontrolled_hypertension", { var: patient.conditions }] } }
+  - id: maoi
+    title: Одновременное применение с ингибиторами МАО (и 14 дней после их отмены)
+    when: { or: [ { in: ["maoi", { var: meds.classes }] }, { "<": [{ var: meds.maoi_stopped_days_ago }, 14] } ] }
+  - { id: cyp1a2, title: "Одновременный приём мощных ингибиторов CYP1A2 (флувоксамин, ципрофлоксацин, эноксацин)", when: { in: ["cyp1a2_strong_inhibitor", { var: meds.classes }] } }
+
+cautions:
+  - { id: bipolar, title: "Мания/гипомания, в т. ч. в анамнезе", when: { some_in: [["bipolar", "mania_history"], { var: patient.conditions }] } }
+  - { id: epilepsy, title: "Эпилептические припадки, в т. ч. в анамнезе", when: { in: ["epilepsy", { var: patient.conditions }] } }
+  - { id: cvd, title: "Артериальная гипертензия и другие сердечно-сосудистые заболевания — контроль АД", when: { in: ["cardiovascular", { var: patient.conditions }] } }
+  - { id: renal, title: "Нарушения функции почек", when: { "<": [{ var: patient.egfr }, 60] } }
+  - { id: pregnancy, title: "Беременность — только если польза превышает риск", when: { "==": [{ var: patient.pregnant }, true] } }
+  - { id: lactation, title: "Лактация — решить вопрос о прекращении вскармливания", when: { "==": [{ var: patient.lactating }, true] } }
+  - { id: driving, title: "Сонливость — осторожность при управлении транспортом", when: { "==": [{ var: patient.drives_professionally }, true] } }
+
+interactions:
+  - { classes: [maoi], severity: contraindicated, text: "Противопоказано (и 14 дней после отмены иМАО)" }
+  - { classes: [cyp1a2_strong_inhibitor], severity: contraindicated, text: "Мощные ингибиторы CYP1A2 противопоказаны" }
+  - { classes: [ssri, snri, tca, triptan, opioid, lithium, st_johns_wort, tryptophan], severity: major, text: "Риск серотонинового синдрома" }
+  - { classes: [cyp2d6_inhibitor], severity: moderate, text: "Ингибиторы CYP2D6 повышают концентрацию дулоксетина" }
+  - { classes: [alcohol, benzodiazepine, hypnotic, antipsychotic], severity: moderate, text: "Усиление действия на ЦНС" }
+
+adverse_reactions:
+  common: [тошнота, сухость во рту, головная боль, сонливость, головокружение, запор, бессонница]
+  uncommon: [повышение АД, гипонатриемия, повышение трансаминаз]
+
+monitoring:
+  scales:
+    - { scale: GAD7, every_days: 7 }
+    - { scale: PHQ9, every_days: 14 }
+  response_check_week: 4

@@ -1,0 +1,64 @@
+# Пароксетин — по инструкции Паксил (РУ ЛП-№(000746)-(РГ-RU)).
+id: paroxetine
+trade_name: Пароксетин (Паксил)
+inn: пароксетин
+atc: N06AB05
+pharm_group: Антидепрессант, СИОЗС
+classes: [ssri, cyp2d6_inhibitor]
+additional_monitoring: false
+verified: false   # по копии ИМП (Видаль); сверить с ГРЛС
+registration: { number: "ЛП-№(000746)-(РГ-RU)", date: "2022-05-04", holder: "ГлаксоСмитКляйн Трейдинг, АО" }
+sources:
+  instruction: { title: "Инструкция по медицинскому применению ЛП Паксил, ЛП-№(000746)-(РГ-RU)", url: "https://www.vidal.ru/drugs/paxil__24822" }
+
+indications:
+  - id: depression
+    title: Депрессивный эпизод средней и тяжёлой степени; рекуррентное депрессивное расстройство
+    icd10: [F32.1, F32.2, F32.3, F33]
+    regimen: { dose_mg: 20, times_per_day: 1, daily_mg: 20, max_daily_mg: 50, timing: "1 раз в сутки утром", duration: "отмена постепенно" }
+  - id: gad
+    title: Генерализованное тревожное расстройство
+    icd10: [F41.1]
+    regimen: { dose_mg: 20, times_per_day: 1, daily_mg: 20, max_daily_mg: 50, timing: "1 раз в сутки утром", duration: "длительно; отмена постепенно" }
+  - id: panic
+    title: Паническое расстройство
+    icd10: [F41.0, F40.0]
+    regimen: { dose_mg: 10, times_per_day: 1, daily_mg: 10, max_daily_mg: 60, timing: "1 раз в сутки утром; рекомендуемая доза 40 мг", duration: "длительно" }
+  - id: ptsd
+    title: Посттравматическое стрессовое расстройство
+    icd10: [F43.1]
+    regimen: { dose_mg: 20, times_per_day: 1, daily_mg: 20, max_daily_mg: 50, timing: "1 раз в сутки утром", duration: "длительно" }
+
+contraindications:
+  - id: maoi
+    title: Комбинация с ингибиторами МАО (в т. ч. линезолид, метиленовый синий)
+    when: { or: [ { in: ["maoi", { var: meds.classes }] }, { "<": [{ var: meds.maoi_stopped_days_ago }, 14] } ] }
+  - { id: thioridazine, title: "Комбинация с тиоридазином", when: { in: ["thioridazine", { var: meds.classes }] } }
+  - { id: pimozide, title: "Сочетанное применение с пимозидом", when: { in: ["pimozide", { var: meds.classes }] } }
+  - { id: age, title: "Детский и подростковый возраст до 18 лет", when: { "<": [{ var: patient.age }, 18] } }
+
+cautions:
+  - { id: elderly, title: "Пожилой возраст: максимум 40 мг/сут", when: { ">=": [{ var: patient.age }, 65] } }
+  - { id: pregnancy, title: "Беременность — только если польза превышает риск", when: { "==": [{ var: patient.pregnant }, true] } }
+  - { id: lactation, title: "Грудное вскармливание", when: { "==": [{ var: patient.lactating }, true] } }
+  - { id: hepatic, title: "Нарушения функции печени", when: { in: [{ var: patient.child_pugh }, ["A", "B", "C"]] } }
+  - { id: renal, title: "Нарушения функции почек", when: { "<": [{ var: patient.egfr }, 60] } }
+  - { id: bipolar, title: "Мания в анамнезе", when: { some_in: [["bipolar", "mania_history"], { var: patient.conditions }] } }
+  - { id: epilepsy, title: "Эпилепсия", when: { in: ["epilepsy", { var: patient.conditions }] } }
+  - { id: glaucoma, title: "Закрытоугольная глаукома", when: { in: ["angle_closure_glaucoma", { var: patient.conditions }] } }
+
+interactions:
+  - { classes: [maoi], severity: contraindicated, text: "Противопоказано" }
+  - { classes: [pimozide, thioridazine], severity: contraindicated, text: "Противопоказано" }
+  - { classes: [ssri, snri, tca, triptan, opioid, lithium, st_johns_wort, tryptophan], severity: major, text: "Риск серотонинового синдрома" }
+  - { classes: [anticoagulant, antiplatelet, nsaid], severity: moderate, text: "Риск кровотечений" }
+
+adverse_reactions:
+  common: [тошнота, сонливость, бессонница, потливость, сексуальная дисфункция, головокружение]
+  uncommon: [гипонатриемия, кровотечения]
+
+monitoring:
+  scales:
+    - { scale: GAD7, every_days: 7 }
+    - { scale: PHQ9, every_days: 14 }
+  response_check_week: 4

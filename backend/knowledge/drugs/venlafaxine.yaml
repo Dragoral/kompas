@@ -1,0 +1,63 @@
+# Венлафаксин — по инструкции Велаксин, капсулы пролонгированного действия (РУ ЛП-№(002093)-(РГ-RU)).
+id: venlafaxine
+trade_name: Венлафаксин (Велаксин, капсулы пролонг.)
+inn: венлафаксин
+atc: N06AX16
+pharm_group: Антидепрессант, СИОЗСН
+classes: [snri]
+additional_monitoring: false
+verified: false   # по копии ИМП (Видаль); сверить с ГРЛС
+registration: { number: "ЛП-№(002093)-(РГ-RU)", date: "2023-04-03", holder: "EGIS Pharmaceuticals, PLC (Венгрия)" }
+sources:
+  instruction: { title: "Инструкция по медицинскому применению ЛП Велаксин, ЛП-№(002093)-(РГ-RU)", url: "https://www.vidal.ru/drugs/velaxin__13404" }
+
+indications:
+  - id: depression
+    title: Депрессия, профилактика рецидивов
+    icd10: [F32, F33]
+    regimen: { dose_mg: 75, times_per_day: 1, daily_mg: 75, max_daily_mg: 375, timing: "1 раз в сутки во время еды", duration: "длительно" }
+  - id: gad
+    title: Генерализованные тревожные расстройства
+    icd10: [F41.1]
+    regimen: { dose_mg: 75, times_per_day: 1, daily_mg: 75, max_daily_mg: 225, timing: "1 раз в сутки во время еды; повышение с интервалом не менее 2 недель", duration: "несколько месяцев и более" }
+  - id: social_anxiety
+    title: Социальное тревожное расстройство
+    icd10: [F40.1]
+    regimen: { dose_mg: 75, times_per_day: 1, daily_mg: 75, max_daily_mg: 225, timing: "1 раз в сутки", duration: "длительно" }
+  - id: panic
+    title: Панические расстройства
+    icd10: [F41.0, F40.0]
+    regimen: { dose_mg: 37.5, times_per_day: 1, daily_mg: 37.5, max_daily_mg: 225, timing: "37,5 мг 7 дней, затем 75 мг", duration: "длительно" }
+
+contraindications:
+  - id: maoi
+    title: Одновременный приём ингибиторов МАО (и 14 дней после их отмены)
+    when: { or: [ { in: ["maoi", { var: meds.classes }] }, { "<": [{ var: meds.maoi_stopped_days_ago }, 14] } ] }
+  - { id: renal, title: "Тяжёлые нарушения функции почек (СКФ < 10 мл/мин)", when: { "<": [{ var: patient.egfr }, 10] } }
+  - { id: hepatic, title: "Тяжёлые нарушения функции печени", when: { "==": [{ var: patient.child_pugh }, "C"] } }
+  - { id: age, title: "Возраст до 18 лет", when: { "<": [{ var: patient.age }, 18] } }
+  - { id: pregnancy, title: "Беременность или предполагаемая беременность", when: { "==": [{ var: patient.pregnant }, true] } }
+  - { id: lactation, title: "Период грудного вскармливания", when: { "==": [{ var: patient.lactating }, true] } }
+
+cautions:
+  - { id: renal_moderate, title: "СКФ 10–30 мл/мин: доза снижается на 50%", when: { "<": [{ var: patient.egfr }, 30] } }
+  - { id: hepatic_moderate, title: "Умеренные нарушения функции печени: доза снижается на 50%", when: { in: [{ var: patient.child_pugh }, ["A", "B"]] } }
+  - { id: cvd, title: "ИБС, сердечная недостаточность, АГ, тахикардия, изменения ЭКГ (в т. ч. удлинение QT)", when: { some_in: [["cardiovascular", "long_qt"], { var: patient.conditions }] } }
+  - { id: epilepsy, title: "Судороги в анамнезе", when: { in: ["epilepsy", { var: patient.conditions }] } }
+  - { id: glaucoma, title: "Закрытоугольная глаукома", when: { in: ["angle_closure_glaucoma", { var: patient.conditions }] } }
+  - { id: bipolar, title: "Маниакальные состояния в анамнезе", when: { some_in: [["bipolar", "mania_history"], { var: patient.conditions }] } }
+
+interactions:
+  - { classes: [maoi], severity: contraindicated, text: "Противопоказано; линезолид не назначать" }
+  - { classes: [ssri, snri, tca, triptan, opioid, lithium, st_johns_wort, tryptophan], severity: major, text: "Риск серотонинового синдрома" }
+  - { classes: [anticoagulant, antiplatelet, nsaid], severity: moderate, text: "Риск кровотечений" }
+
+adverse_reactions:
+  common: [тошнота, головная боль, бессонница, сонливость, потливость, сухость во рту, головокружение]
+  uncommon: [повышение АД, тахикардия, гипонатриемия]
+
+monitoring:
+  scales:
+    - { scale: GAD7, every_days: 7 }
+    - { scale: PHQ9, every_days: 14 }
+  response_check_week: 4

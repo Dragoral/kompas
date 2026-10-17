@@ -15,3 +15,5 @@ map:
   - { codes: [I45.8], tag: long_qt, title: "Синдром удлинённого QT" }
   - { codes: [E10, E11, E13, E14], tag: diabetes, title: "Сахарный диабет" }
   - { codes: [E00, E01, E02, E03, E04, E05, E06, E07], tag: endocrine, title: "Заболевания щитовидной железы" }
+  - { codes: [K70, K71, K72, K73, K74, K75, K76], tag: liver_disease, title: "Заболевания печени" }
+  - { codes: [H40.2], tag: angle_closure_glaucoma, title: "Закрытоугольная глаукома" }

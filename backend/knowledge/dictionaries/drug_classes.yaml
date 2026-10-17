@@ -7,7 +7,7 @@ substances:
   сертралин: { classes: [ssri, cyp2d6_inhibitor], aliases: [золофт, асентра, стимулотон] }
   флуоксетин: { classes: [ssri, cyp2d6_inhibitor], aliases: [прозак, флуоксетин-ланнахер] }
   пароксетин: { classes: [ssri, cyp2d6_inhibitor], aliases: [паксил, рексетин] }
-  флувоксамин: { classes: [ssri], aliases: [феварин] }
+  флувоксамин: { classes: [ssri, cyp1a2_strong_inhibitor], aliases: [феварин] }
   венлафаксин: { classes: [snri], aliases: [велаксин, велафакс] }
   дулоксетин: { classes: [snri, cyp2d6_inhibitor], aliases: [симбалта] }
   амитриптилин: { classes: [tca], aliases: [] }
@@ -45,6 +45,16 @@ substances:
   имипрамин: { classes: [tca], aliases: [мелипрамин] }
   буспирон: { classes: [anxiolytic], aliases: [спитомин] }
   вортиоксетин: { classes: [other_antidepressant], aliases: [бринтелликс] }
+  пимозид: { classes: [pimozide], aliases: [орап] }
+  тиоридазин: { classes: [thioridazine, antipsychotic], aliases: [сонапакс] }
+  ципрофлоксацин: { classes: [cyp1a2_strong_inhibitor], aliases: [ципролет, ципробай] }
+  эноксацин: { classes: [cyp1a2_strong_inhibitor], aliases: [] }
+  варфарин: { classes: [anticoagulant], aliases: [варфарекс] }
+  апиксабан: { classes: [anticoagulant], aliases: [эликвис] }
+  ривароксабан: { classes: [anticoagulant], aliases: [ксарелто] }
+  ацетилсалициловая кислота: { classes: [antiplatelet], aliases: [аспирин, кардиомагнил, тромбо асс] }
+  ибупрофен: { classes: [nsaid], aliases: [нурофен, миг] }
+  диклофенак: { classes: [nsaid], aliases: [вольтарен, ортофен] }
   фабомотизол: { classes: [anxiolytic], aliases: [афобазол] }
   этифоксин: { classes: [anxiolytic], aliases: [стрезам] }
   метопролол: { classes: [beta_blocker], aliases: [беталок, эгилок] }
@@ -71,4 +81,11 @@ class_titles:
   tryptophan: L-триптофан
   cyp2d6_inhibitor: ингибиторы CYP2D6
   qt_prolonging: удлиняющие QT
+  pimozide: пимозид
+  thioridazine: тиоридазин
+  cyp1a2_strong_inhibitor: мощные ингибиторы CYP1A2
+  anticoagulant: антикоагулянты
+  antiplatelet: антиагреганты
+  nsaid: НПВП
+  gabapentinoid: габапентиноиды
   alcohol: алкоголь

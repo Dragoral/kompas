@@ -41,7 +41,9 @@ def test_s3_depression_off_label_requires_doctor_rationale(client, tokens):
     p = pid(client, tokens, "therapist", "P-DEMO3")
     rec = client.get(f"/api/doctor/patients/{p}/recommendations", headers=tokens["therapist"]).json()
     statuses = {d["drug_id"]: d["status"] for d in rec["drugs"]}
-    assert statuses == {"aviandr": "off_label", "escitalopram": "indicated"}
+    assert statuses["aviandr"] == "off_label"  # депрессия — нет в показаниях Авиандра
+    assert statuses["escitalopram"] == "indicated" and statuses["paroxetine"] == "indicated"
+    assert statuses["pregabalin"] == "off_label"
     assert rec["routing"]["level"] == "desirable"
     r = client.post(f"/api/doctor/patients/{p}/prescriptions", headers=tokens["therapist"], json={"drug_id": "aviandr"})
     assert r.status_code == 409

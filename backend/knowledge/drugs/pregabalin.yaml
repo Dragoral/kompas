@@ -1,0 +1,42 @@
+# Прегабалин — по инструкции Лирика (РУ ЛП-№(004450)-(РГ-RU)).
+id: pregabalin
+trade_name: Прегабалин (Лирика)
+inn: прегабалин
+atc: N03AX16
+pharm_group: Противоэпилептическое средство (габапентиноид)
+classes: [gabapentinoid]
+additional_monitoring: false
+verified: false   # по копии ИМП (Видаль); сверить с ГРЛС
+registration: { number: "ЛП-№(004450)-(РГ-RU)", date: "2024-01-30", holder: "UPJOHN US 1, LLC (США)" }
+sources:
+  instruction: { title: "Инструкция по медицинскому применению ЛП Лирика, ЛП-№(004450)-(РГ-RU)", url: "https://www.vidal.ru/drugs/lyrica__9474" }
+
+indications:
+  - id: gad
+    title: Генерализованное тревожное расстройство у взрослых
+    icd10: [F41.1]
+    regimen: { dose_mg: 75, times_per_day: 2, daily_mg: 150, max_daily_mg: 600, timing: "150 мг/сут в 2–3 приёма; через 7 дней — до 300, затем 450, максимум 600 мг/сут", duration: "регулярно оценивать необходимость; отмена постепенно, не менее недели" }
+
+contraindications:
+  - { id: age, title: "Детский и подростковый возраст до 17 лет включительно", when: { "<": [{ var: patient.age }, 18] } }
+
+cautions:
+  - { id: renal, title: "Почечная недостаточность: КК 30–60 — максимум 300 мг/сут; 15–30 — 150; менее 15 — 75 мг/сут", when: { "<": [{ var: patient.egfr }, 60] } }
+  - { id: chf, title: "Хроническая сердечная недостаточность", when: { in: ["cardiovascular", { var: patient.conditions }] } }
+  - { id: dependence, title: "Лекарственная зависимость в анамнезе (риск злоупотребления)", when: { some_in: [["alcohol_dependence", "substance_dependence"], { var: patient.conditions }] } }
+  - { id: elderly, title: "Старше 65 лет — может потребоваться снижение дозы (функция почек)", when: { ">=": [{ var: patient.age }, 65] } }
+  - { id: pregnancy, title: "Беременность — только если польза явно превышает риск", when: { "==": [{ var: patient.pregnant }, true] } }
+  - { id: lactation, title: "Грудное вскармливание не рекомендуется", when: { "==": [{ var: patient.lactating }, true] } }
+
+interactions:
+  - { classes: [opioid], severity: major, text: "Опиоиды: угнетение дыхания, повышенный риск смерти — с осторожностью" }
+  - { classes: [benzodiazepine, hypnotic, antipsychotic, antihistamine_h1, alcohol], severity: major, text: "Угнетение ЦНС (нарушение дыхания, кома)" }
+
+adverse_reactions:
+  common: [головокружение, сонливость, головная боль, повышение аппетита, увеличение массы тела, нечёткость зрения, эйфория]
+  uncommon: [периферические отёки, синдром отмены]
+
+monitoring:
+  scales:
+    - { scale: GAD7, every_days: 7 }
+  response_check_week: 4

@@ -1,0 +1,68 @@
+# Сертралин — по инструкции Золофт (РУ ЛП-№(002851)-(РГ-RU)).
+# Показания «ГТР» в инструкции нет: при F41.1 — вне инструкции (в КР 457_3 — «#сертралин»).
+id: sertraline
+trade_name: Сертралин (Золофт)
+inn: сертралин
+atc: N06AB06
+pharm_group: Антидепрессант, СИОЗС
+classes: [ssri, cyp2d6_inhibitor]
+additional_monitoring: false
+verified: false   # по копии ИМП (Видаль); сверить с ГРЛС
+registration: { number: "ЛП-№(002851)-(РГ-RU)", date: "2023-07-24", holder: "VIATRIS SPECIALTY, LLC (США)" }
+sources:
+  instruction: { title: "Инструкция по медицинскому применению ЛП Золофт, ЛП-№(002851)-(РГ-RU)", url: "https://www.vidal.ru/drugs/zoloft" }
+
+indications:
+  - id: depression
+    title: Эпизоды большого депрессивного расстройства, профилактика рецидивов (взрослые)
+    icd10: [F32, F33]
+    regimen: { dose_mg: 50, times_per_day: 1, daily_mg: 50, max_daily_mg: 200, timing: "1 раз в сутки; повышение на 50 мг не чаще 1 раза в неделю", duration: "не менее 6 месяцев" }
+  - id: panic
+    title: Паническое расстройство с агорафобией или без неё
+    icd10: [F41.0, F40.0]
+    regimen: { dose_mg: 25, times_per_day: 1, daily_mg: 25, max_daily_mg: 200, timing: "25 мг, через неделю 50 мг", duration: "длительно" }
+  - id: ptsd
+    title: Посттравматическое стрессовое расстройство
+    icd10: [F43.1]
+    regimen: { dose_mg: 25, times_per_day: 1, daily_mg: 25, max_daily_mg: 200, timing: "25 мг, через неделю 50 мг", duration: "длительно" }
+  - id: social_anxiety
+    title: Социальное тревожное расстройство
+    icd10: [F40.1]
+    regimen: { dose_mg: 25, times_per_day: 1, daily_mg: 25, max_daily_mg: 200, timing: "25 мг, через неделю 50 мг", duration: "длительно" }
+
+contraindications:
+  - id: maoi
+    title: Одновременное применение с необратимыми иМАО (не ранее 14 дней после их отмены)
+    when: { or: [ { in: ["maoi", { var: meds.classes }] }, { "<": [{ var: meds.maoi_stopped_days_ago }, 14] } ] }
+  - { id: pimozide, title: "Одновременное применение с пимозидом", when: { in: ["pimozide", { var: meds.classes }] } }
+  - { id: age, title: "Возраст до 18 лет (кроме ОКР)", when: { "<": [{ var: patient.age }, 18] } }
+
+cautions:
+  - { id: hepatic_severe, title: "Тяжёлая печёночная недостаточность — не применять; при нарушениях функции печени — снизить дозу", when: { in: [{ var: patient.child_pugh }, ["A", "B", "C"]] } }
+  - { id: cvd, title: "Удлинение QT: сердечно-сосудистые заболевания, электролитные нарушения", when: { some_in: [["cardiovascular", "long_qt"], { var: patient.conditions }] } }
+  - { id: bipolar, title: "Мания/гипомания в анамнезе", when: { some_in: [["bipolar", "mania_history"], { var: patient.conditions }] } }
+  - { id: epilepsy, title: "Эпилепсия (нестабильная — избегать)", when: { in: ["epilepsy", { var: patient.conditions }] } }
+  - { id: diabetes, title: "Сахарный диабет (коррекция сахароснижающей терапии)", when: { in: ["diabetes", { var: patient.conditions }] } }
+  - { id: glaucoma, title: "Закрытоугольная глаукома", when: { in: ["angle_closure_glaucoma", { var: patient.conditions }] } }
+  - { id: elderly, title: "Пожилой возраст — риск гипонатриемии", when: { ">=": [{ var: patient.age }, 65] } }
+  - { id: pregnancy, title: "Беременность — только если польза превышает риск", when: { "==": [{ var: patient.pregnant }, true] } }
+  - { id: lactation, title: "Грудное вскармливание — не рекомендуется", when: { "==": [{ var: patient.lactating }, true] } }
+
+interactions:
+  - { classes: [maoi], severity: contraindicated, text: "Необратимые иМАО противопоказаны; линезолид не назначать" }
+  - { classes: [pimozide], severity: contraindicated, text: "Противопоказано" }
+  - { classes: [ssri, snri, tca, triptan, opioid, lithium, st_johns_wort, tryptophan], severity: major, text: "Риск серотонинового синдрома — по возможности избегать" }
+  - { classes: [anticoagulant], severity: moderate, text: "Варфарин: контроль МНО в начале терапии и при отмене" }
+  - { classes: [antiplatelet, nsaid], severity: moderate, text: "Риск кровотечений" }
+  - { classes: [qt_prolonging], severity: major, text: "Риск удлинения QT" }
+  - { classes: [alcohol], severity: moderate, text: "Алкоголь не рекомендуется" }
+
+adverse_reactions:
+  common: [тошнота, диарея, бессонница, сонливость, головокружение, сексуальная дисфункция]
+  uncommon: [гипонатриемия, кровотечения]
+
+monitoring:
+  scales:
+    - { scale: PHQ9, every_days: 7 }
+    - { scale: GAD7, every_days: 14 }
+  response_check_week: 4

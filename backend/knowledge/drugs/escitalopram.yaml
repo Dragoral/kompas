@@ -1,74 +1,49 @@
-# Эсциталопрам — для сценариев с депрессивной симптоматикой (альтернатива, когда
-# Авиандр вне показаний). verified: false — требует сверки врачом с ОХЛП в ГРЛС.
+# Эсциталопрам — по инструкции Ципралекс (РУ ЛП-№(011897)-(РГ-RU) от 29.09.2025).
+# В инструкции НЕТ показания «ГТР»: при F41.1 применение — вне инструкции (решение врача),
+# хотя КР 457_3 относит эсциталопрам к первой линии.
 id: escitalopram
-trade_name: Эсциталопрам (Ципралекс и др.)
+trade_name: Эсциталопрам (Ципралекс)
 inn: эсциталопрам
 atc: N06AB10
 pharm_group: Антидепрессант, СИОЗС
 classes: [ssri]
 additional_monitoring: false
-verified: false
-registration:
-  number: "сверить в ГРЛС (grls.rosminzdrav.ru)"
-  holder: "сверить в ГРЛС"
-
+verified: false   # по копии ИМП (Видаль); сверить с ГРЛС
+registration: { number: "ЛП-№(011897)-(РГ-RU)", date: "2025-09-29", holder: "H. Lundbeck A/S (Дания)" }
 sources:
-  instruction: &instr
-    title: Инструкция по медицинскому применению ЛП Ципралекс (ГРЛС)
-    url: https://grls.rosminzdrav.ru
+  instruction: { title: "Инструкция по медицинскому применению ЛП Ципралекс, ЛП-№(011897)-(РГ-RU)", url: "https://www.vidal.ru/drugs/cipralex__3385" }
 
 indications:
   - id: depression
-    title: Депрессивные эпизоды любой тяжести
+    title: Депрессия
     icd10: [F32, F33]
-    regimen: { dose_mg: 10, times_per_day: 1, daily_mg: 10, max_daily_mg: 20, timing: "1 раз в сутки", duration: "не менее 6 месяцев после ремиссии" }
-    source: *instr
-  - id: gad
-    title: Генерализованное тревожное расстройство
-    icd10: [F41.1]
-    regimen: { dose_mg: 10, times_per_day: 1, daily_mg: 10, max_daily_mg: 20, timing: "1 раз в сутки", duration: "3 месяца и более" }
-    source: *instr
+    regimen: { dose_mg: 10, times_per_day: 1, daily_mg: 10, max_daily_mg: 20, timing: "1 раз в сутки", duration: "несколько месяцев; отмена постепенно за 1–2 недели" }
   - id: panic
-    title: Паническое расстройство
-    icd10: [F41.0]
-    regimen: { dose_mg: 5, times_per_day: 1, daily_mg: 5, max_daily_mg: 20, timing: "первая неделя 5 мг, затем 10 мг", duration: "несколько месяцев" }
-    source: *instr
+    title: Панические расстройства (в т. ч. с агорафобией)
+    icd10: [F41.0, F40.0]
+    regimen: { dose_mg: 5, times_per_day: 1, daily_mg: 5, max_daily_mg: 20, timing: "1 раз в сутки, низкая начальная доза", duration: "несколько месяцев" }
 
 contraindications:
   - id: maoi
-    title: Одновременный приём необратимых иМАО (и 14 дней после отмены)
+    title: Одновременный приём ингибиторов МАО (и 2 недели после отмены необратимых иМАО)
     when: { or: [ { in: ["maoi", { var: meds.classes }] }, { "<": [{ var: meds.maoi_stopped_days_ago }, 14] } ] }
-  - id: qt
-    title: Удлинение интервала QT (в т.ч. врождённое)
-    when: { in: ["long_qt", { var: patient.conditions }] }
-  - id: age
-    title: Возраст до 18 лет
-    when: { "<": [{ var: patient.age }, 18] }
+  - { id: age, title: "Детский и подростковый возраст до 15 лет", when: { "<": [{ var: patient.age }, 15] } }
+  - { id: pregnancy, title: "Беременность", when: { "==": [{ var: patient.pregnant }, true] } }
+  - { id: lactation, title: "Период грудного вскармливания", when: { "==": [{ var: patient.lactating }, true] } }
 
 cautions:
-  - id: elderly
-    title: Пожилой возраст — начальная доза 5 мг, максимум 10 мг/сут
-    when: { ">=": [{ var: patient.age }, 65] }
-  - id: hepatic
-    title: Печёночная недостаточность — снижение дозы
-    when: { in: [{ var: patient.child_pugh }, ["A", "B", "C"]] }
-  - id: pregnancy
-    title: Беременность — только при строгих показаниях
-    when: { "==": [{ var: patient.pregnant }, true] }
-  - id: bipolar
-    title: Риск инверсии фазы при биполярном расстройстве
-    when: { in: ["bipolar", { var: patient.conditions }] }
+  - { id: elderly, title: "Пожилой возраст (> 65 лет): начальная доза 5 мг, максимум 10 мг/сут", when: { ">=": [{ var: patient.age }, 65] } }
+  - { id: hepatic, title: "Печёночная недостаточность: первые 2 недели 5 мг/сут, затем до 10 мг/сут", when: { in: [{ var: patient.child_pugh }, ["A", "B", "C"]] } }
+  - { id: renal, title: "Почечная недостаточность (КК < 30 мл/мин)", when: { "<": [{ var: patient.egfr }, 30] } }
+  - { id: bipolar, title: "Гипомания, мания", when: { some_in: [["bipolar", "mania_history"], { var: patient.conditions }] } }
+  - { id: epilepsy, title: "Фармакологически неконтролируемая эпилепсия", when: { in: ["epilepsy", { var: patient.conditions }] } }
+  - { id: diabetes, title: "Сахарный диабет", when: { in: ["diabetes", { var: patient.conditions }] } }
 
 interactions:
-  - classes: [maoi]
-    severity: contraindicated
-    text: Риск серотонинового синдрома
-  - classes: [ssri, snri, tca, triptan, opioid, lithium, st_johns_wort]
-    severity: major
-    text: Риск серотонинового синдрома
-  - classes: [qt_prolonging]
-    severity: major
-    text: Риск удлинения QT
+  - { classes: [maoi], severity: contraindicated, text: "Противопоказано; эсциталопрам — не ранее 2 недель после отмены необратимых иМАО" }
+  - { classes: [ssri, snri, tca, triptan, opioid, lithium, st_johns_wort, tryptophan], severity: major, text: "Риск серотонинового синдрома" }
+  - { classes: [anticoagulant, antiplatelet, nsaid], severity: moderate, text: "Склонность к кровотечениям — с осторожностью" }
+  - { classes: [alcohol], severity: moderate, text: "С осторожностью при одновременном приёме этанола" }
 
 adverse_reactions:
   common: [тошнота, головная боль, бессонница, сонливость, сексуальная дисфункция, потливость]
