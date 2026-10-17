@@ -1,68 +1,119 @@
-# Маршрутизация к психиатру для врачей непсихиатрических специальностей.
-# level: mandatory («обязательно») | desirable («желательно»).
-# Итоговый уровень — максимальный среди сработавших правил.
-# Направление оформляется ТОЛЬКО после подтверждения врачом.
-applies_when: { "!=": [{ var: doctor.specialty }, "psychiatrist"] }
+# Маршрутизация пациента. Правило: цель (target), уровень — mandatory («обязательно»)
+# или desirable («желательно»), для кого действует (applies), условие и источник.
+# Итоговый уровень по каждой цели — максимальный среди сработавших правил.
+# Если ничего не сработало — default_route. Направление оформляется ТОЛЬКО после
+# подтверждения врачом. Пороги определены командой; verified: false — до
+# утверждения врачами команды.
+verified: false
+default_route:
+  target: observation
+  title: Продолжить амбулаторное наблюдение у лечащего врача
+targets:
+  psychiatrist: Консультация врача-психиатра
+  hospitalization: Рассмотреть госпитализацию в психиатрический стационар
+  psychotherapy: Психотерапия (врач-психотерапевт / медицинский психолог)
+applies:
+  non_psychiatrist: { "!=": [{ var: doctor.specialty }, "psychiatrist"] }
+  all: { "==": [1, 1] }
+
 rules:
+  # --- к психиатру (для врачей других специальностей, ТЗ п. 8) ---
   - id: suicide_risk
+    target: psychiatrist
+    applies: non_psychiatrist
     level: mandatory
     urgency: срочно (в день обращения)
     title: Суицидальный риск
     when: { or: [{ ">": [{ var: scales.PHQ9.items.9 }, 0] }, { ">=": [{ var: scales.CSSRS.score }, 2] }, { "==": [{ var: flags.self_harm_text }, true] }] }
-    source: "КР «Депрессивный эпизод…» (МЗ РФ, ID 301)"
+    source: "КР «Депрессивный эпизод…» (301_3), раздел 2.1: оценка суицидального риска, пристальное наблюдение"
 
   - id: severe_depression
+    target: psychiatrist
+    applies: non_psychiatrist
     level: mandatory
     urgency: в течение 7 дней
     title: Тяжёлая депрессия (PHQ-9 ≥ 20)
     when: { ">=": [{ var: scales.PHQ9.score }, 20] }
-    source: "КР «Депрессивный эпизод…» (ID 301); Kroenke 2001"
+    source: "Kroenke 2001 (PHQ-9 ≥ 20 — тяжёлая депрессия); КР 301_3"
 
   - id: psychotic_or_bipolar
+    target: psychiatrist
+    applies: non_psychiatrist
     level: mandatory
     urgency: в течение 7 дней
     title: Психотические симптомы или признаки биполярного расстройства
     when: { some_in: [["psychotic_symptoms", "bipolar", "mania_history"], { var: patient.conditions }] }
-    source: "КР «Депрессивный эпизод…» (ID 301): дифференциальная диагностика"
+    source: "КР 301_3: дифференциальная диагностика; МКБ-10 F20–F29, F30–F31, F32.3/F33.3"
 
   - id: no_response
+    target: psychiatrist
+    applies: non_psychiatrist
     level: mandatory
     urgency: плановая
     title: Нет ответа на терапию через 4–6 недель
     when: { and: [{ ">=": [{ var: therapy.weeks_on_current }, 4] }, { ">": [{ var: scales.GAD7.change_from_baseline_pct }, -25] }] }
-    source: "КР «ГТР» (ID 457)"
+    source: "КР 457_3, раздел 3.2: при недостаточной эффективности через 4–6 недель — смена терапии"
 
   - id: dependence
+    target: psychiatrist
+    applies: non_psychiatrist
     level: mandatory
     urgency: плановая
-    title: Коморбидная зависимость от ПАВ
+    title: Коморбидная зависимость от психоактивных веществ
     when: { some_in: [["alcohol_dependence", "substance_dependence"], { var: patient.conditions }] }
-    source: "КР «ГТР» (ID 457)"
+    source: "КР 457_3; МКБ-10 F10.2–F19.2"
 
   - id: moderate_severe_depression
+    target: psychiatrist
+    applies: non_psychiatrist
     level: desirable
     urgency: плановая
     title: Умеренно тяжёлая депрессия (PHQ-9 15–19)
     when: { and: [{ ">=": [{ var: scales.PHQ9.score }, 15] }, { "<": [{ var: scales.PHQ9.score }, 20] }] }
-    source: "Kroenke 2001; КР «Депрессивный эпизод…» (ID 301)"
+    source: "Kroenke 2001; КР 301_3"
 
   - id: severe_anxiety
+    target: psychiatrist
+    applies: non_psychiatrist
     level: desirable
     urgency: плановая
     title: Выраженная тревога (GAD-7 ≥ 15)
     when: { ">=": [{ var: scales.GAD7.score }, 15] }
-    source: "Spitzer 2006 (GAD-7)"
+    source: "Spitzer 2006 (GAD-7 ≥ 15 — тяжёлая тревога)"
 
   - id: mixed_anxiety_depression
+    target: psychiatrist
+    applies: non_psychiatrist
     level: desirable
     urgency: плановая
     title: Сочетание тревоги и депрессии (GAD-7 ≥ 10 и PHQ-9 ≥ 10)
     when: { and: [{ ">=": [{ var: scales.GAD7.score }, 10] }, { ">=": [{ var: scales.PHQ9.score }, 10] }] }
-    source: "КР «ГТР» (ID 457): коморбидность"
+    source: "КР 457_3: коморбидность"
 
   - id: partial_response
+    target: psychiatrist
+    applies: non_psychiatrist
     level: desirable
     urgency: плановая
     title: Частичный ответ на терапию
     when: { and: [{ ">=": [{ var: therapy.weeks_on_current }, 4] }, { "<=": [{ var: scales.GAD7.change_from_baseline_pct }, -25] }, { ">": [{ var: scales.GAD7.change_from_baseline_pct }, -50] }] }
-    source: "КР «ГТР» (ID 457)"
+    source: "КР 457_3, раздел 3.2"
+
+  # --- для всех врачей, включая психиатра ---
+  - id: high_suicide_risk
+    target: hospitalization
+    applies: all
+    level: mandatory
+    urgency: экстренно
+    title: Высокий суицидальный риск (C-SSRS — намерение, план или действия)
+    when: { ">=": [{ var: scales.CSSRS.score }, 4] }
+    source: "КР 301_3, раздел 2.1: «при выявлении высокого риска суицидального поведения необходима госпитализация»; добровольность — ст. 4, 29 Закона РФ № 3185-1"
+
+  - id: psychotherapy_gad
+    target: psychotherapy
+    applies: all
+    level: desirable
+    urgency: плановая
+    title: Психотерапия при ГТР не проводится
+    when: { and: [{ starts_any: [["F41.1"], { var: patient.icd10 }] }, { "!": { var: patient.psychotherapy } }] }
+    source: "КР 457_3, раздел 3.3: релаксационные методы 10–15 сеансов (УУР B, УДД 1), КПТ (УУР C, УДД 5)"

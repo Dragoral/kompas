@@ -76,6 +76,9 @@ def evaluate(rule: Any, ctx: dict) -> Any:
     if op == "some_in":  # пересечение двух списков непусто
         a, b = vals
         return bool(a and b and set(a) & set(b))
+    if op == "starts_any":  # какой-либо код из списка начинается с одного из префиксов (МКБ-10)
+        prefixes, codes = vals
+        return bool(prefixes and codes and any(str(c).startswith(p) for c in codes for p in prefixes))
     raise ValueError(f"JSON-logic: неизвестный оператор {op!r}")
 
 

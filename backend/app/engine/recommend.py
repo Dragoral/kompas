@@ -94,18 +94,38 @@ def evaluate_drug(drug: dict, ctx: dict, kb: dict) -> dict:
 
 
 def routing(ctx: dict, kb: dict) -> dict | None:
+    """Маршрутизация по целям: консультация психиатра (для непсихиатров), госпитализация,
+    психотерапия. Для каждой цели — уровень «обязательно»/«желательно» и причины с источниками.
+    Если ничего не сработало — маршрут по умолчанию (наблюдение у лечащего врача)."""
     rs = kb["rules"].get("routing")
     if not rs:
         return None
-    if "applies_when" in rs and not logic.evaluate(rs["applies_when"], ctx):
-        return None
-    hits = [
-        {"id": r["id"], "title": r["title"], "level": r["level"], "urgency": r.get("urgency"), "source": r.get("source")}
-        for r in rs["rules"] if logic.evaluate(r["when"], ctx)
-    ]
-    level = "mandatory" if any(h["level"] == "mandatory" for h in hits) else ("desirable" if hits else None)
-    hits.sort(key=lambda h: h["level"] != "mandatory")
-    return {"level": level, "reasons": hits}
+    applies = {k: logic.evaluate(v, ctx) for k, v in (rs.get("applies") or {}).items()}
+    by_target: dict[str, list[dict]] = {}
+    for r in rs["rules"]:
+        if not applies.get(r.get("applies", "all"), True) or not logic.evaluate(r["when"], ctx):
+            continue
+        by_target.setdefault(r.get("target", "psychiatrist"), []).append(
+            {"id": r["id"], "title": r["title"], "level": r["level"], "urgency": r.get("urgency"), "source": r.get("source")})
+    routes = []
+    for target, hits in by_target.items():
+        hits.sort(key=lambda h: h["level"] != "mandatory")
+        level = "mandatory" if any(h["level"] == "mandatory" for h in hits) else "desirable"
+        routes.append({"target": target, "title": rs.get("targets", {}).get(target, target), "level": level,
+                       "urgency": hits[0].get("urgency"), "reasons": hits})
+    routes.sort(key=lambda x: (x["level"] != "mandatory", x["target"] != "hospitalization"))
+    if not routes:
+        d = rs.get("default_route", {"target": "observation", "title": "Наблюдение у лечащего врача"})
+        routes = [{"target": d["target"], "title": d["title"], "level": None, "urgency": None, "reasons": []}]
+    psy = next((x for x in routes if x["target"] == "psychiatrist"), None)
+    return {
+        "routes": routes,
+        # совместимость: направление к психиатру (ТЗ п. 8)
+        "level": psy["level"] if psy else None,
+        "reasons": psy["reasons"] if psy else [],
+        "applies_to_psychiatrist_referral": applies.get("non_psychiatrist", True),
+        "verified": rs.get("verified", False),
+    }
 
 
 def recommend(ctx: dict, kb: dict, drug_ids: list[str] | None = None) -> dict:

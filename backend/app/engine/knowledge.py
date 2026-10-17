@@ -21,7 +21,7 @@ import hashlib
 from ..models import KnowledgeItem, KnowledgeVersion, now
 from . import logic
 
-KINDS = {"scales": "scale", "drugs": "drug", "rules": "rules", "guidelines": "guideline"}
+KINDS = {"scales": "scale", "drugs": "drug", "rules": "rules", "guidelines": "guideline", "dictionaries": "dictionary"}
 
 _lock = threading.Lock()
 _cache: dict | None = None
@@ -36,10 +36,7 @@ def load_yaml_dir(root: Path = KNOWLEDGE_DIR) -> list[tuple[str, str, dict]]:
         for f in sorted((root / sub).glob("*.yaml")):
             # JSON-нормализация: даты и прочие YAML-типы -> строки
             body = json.loads(json.dumps(yaml.safe_load(f.read_text(encoding="utf-8")), default=str, ensure_ascii=False))
-            if f.stem == "drug_classes":
-                items.append(("dictionary", "drug_classes", body))
-                continue
-            code = body.get("code") or body.get("id") or f.stem
+            code = f.stem if kind == "dictionary" else (body.get("code") or body.get("id") or f.stem)
             items.append((kind, code, body))
     return items
 
@@ -126,6 +123,11 @@ def validate(kind: str, body: dict) -> None:
         need("rules")
         if "applies_when" in body:
             logic.validate(body["applies_when"])
+        for cond in (body.get("applies") or {}).values():
+            logic.validate(cond)
+        for r in body["rules"]:
+            if "applies" in r and r["applies"] not in (body.get("applies") or {}):
+                raise ValueError(f"Правило {r.get('id')}: неизвестная область применения {r['applies']}")
         for r in body["rules"]:
             if "id" not in r or "when" not in r:
                 raise ValueError("Правило без id/when")

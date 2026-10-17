@@ -52,3 +52,33 @@ def test_therapy_history_validation(client, tokens):
     p = pid(client, tokens, "psychiatrist", "P-DEMO4")
     r = client.patch(f"/api/doctor/patients/{p}", headers=tokens["psychiatrist"], json={"therapy_history": [{"inn": "x", "outcome": "bad"}]})
     assert r.status_code == 422
+
+
+def test_routing_for_psychiatrist_patient_psychotherapy(client, tokens):
+    rec = _rec(client, tokens, "psychiatrist", "P-DEMO4")
+    routes = {r["target"]: r for r in rec["routing"]["routes"]}
+    assert routes["psychotherapy"]["level"] == "desirable"  # КР 457, 3.3
+    assert "psychiatrist" not in routes  # ведёт психиатр
+
+
+def test_dependence_from_icd_code_makes_referral_mandatory(client, tokens):
+    p = pid(client, tokens, "therapist", "P-DEMO2")
+    card = client.get(f"/api/doctor/patients/{p}", headers=tokens["therapist"]).json()
+    dx = card["patient"]["diagnoses"] + [{"icd10": "F10.2", "title": "Синдром зависимости от алкоголя"}]
+    client.patch(f"/api/doctor/patients/{p}", headers=tokens["therapist"], json={"diagnoses": dx})
+    rec = _rec(client, tokens, "therapist", "P-DEMO2")
+    psy = next(r for r in rec["routing"]["routes"] if r["target"] == "psychiatrist")
+    assert psy["level"] == "mandatory" and any(x["id"] == "dependence" for x in psy["reasons"])
+    client.patch(f"/api/doctor/patients/{p}", headers=tokens["therapist"], json={"diagnoses": card["patient"]["diagnoses"]})
+
+
+def test_high_suicide_risk_routes_to_hospitalization(client, tokens):
+    import uuid
+    ans = {str(i): 1 for i in range(1, 7)}
+    r = client.post("/api/me/scales", headers=tokens["patient6"], json={"scale_code": "CSSRS", "answers": ans, "client_id": str(uuid.uuid4())})
+    assert r.status_code == 200
+    rec = _rec(client, tokens, "psychiatrist", "P-DEMO6")
+    hosp = next(x for x in rec["routing"]["routes"] if x["target"] == "hospitalization")
+    assert hosp["level"] == "mandatory" and rec["routing"]["routes"][0]["target"] == "hospitalization"
+    acts = client.get("/api/doctor/actions", headers=tokens["psychiatrist"]).json()
+    assert any(a["kind"] == "referral" and a["payload"]["target"] == "hospitalization" for a in acts)

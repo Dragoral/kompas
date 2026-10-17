@@ -41,7 +41,7 @@ def build(db: Session, patient: Patient, at: datetime | None = None) -> dict:
             "lactating": bool(prof.get("lactating")),
             "egfr": prof.get("egfr"),
             "child_pugh": prof.get("child_pugh"),
-            "conditions": list(prof.get("conditions", [])),
+            "conditions": sorted(set(prof.get("conditions", [])) | conditions_from_icd(kb, patient.diagnoses or [])),
             "allergies": list(prof.get("allergies", [])),
             "post_covid": bool(prof.get("post_covid")),
             "drives_professionally": bool(prof.get("drives_professionally")),
@@ -162,6 +162,13 @@ def build(db: Session, patient: Patient, at: datetime | None = None) -> dict:
     quote = next((m.group(0) for t in texts if (m := SELF_HARM.search(t))), None)
     ctx["flags"] = {"self_harm_text": quote is not None, "self_harm_quote": quote}
     return ctx
+
+
+def conditions_from_icd(kb: dict, diagnoses: list[dict]) -> set[str]:
+    """Состояния из кодов МКБ-10 (справочник icd_conditions): F10.2 -> зависимость от алкоголя и т. п."""
+    mapping = kb["dictionary"].get("icd_conditions", {}).get("map", [])
+    codes = [d.get("icd10", "") for d in diagnoses]
+    return {m["tag"] for m in mapping for c in codes for prefix in m["codes"] if c.startswith(prefix)}
 
 
 def thresholds(kb: dict, patient: Patient) -> dict:

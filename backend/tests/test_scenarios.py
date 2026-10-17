@@ -22,7 +22,8 @@ def test_s1_gad_psychiatrist_aviandr_indicated_remission(client, tokens):
     assert av["status"] == "indicated"
     assert av["regimen"]["daily_mg"] == 40
     assert av["registration"]["number"].startswith("ЛП-")
-    assert rec["routing"] is None  # психиатр — маршрутизация не применяется
+    # пациентка у психиатра, получает КПТ — маршрут по умолчанию: наблюдение у лечащего врача
+    assert [r["target"] for r in rec["routing"]["routes"]] == ["observation"]
     card = client.get(f"/api/doctor/patients/{p}", headers=tokens["psychiatrist"]).json()
     assert card["context"]["scales"]["HAMA"]["score"] <= 7  # ремиссия
 

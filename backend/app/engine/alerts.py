@@ -114,19 +114,26 @@ def _run_actions(db: Session, patient: Patient, alert: Alert, actions: list) -> 
 
 
 def _sync_referral(db: Session, patient: Patient, ctx: dict, kb: dict) -> None:
+    """Предложения врачу по каждой цели маршрутизации (только предложения — решает врач)."""
     r = recommend.routing(ctx, kb)
-    if not r or not r["level"]:
+    if not r:
         return
     existing = db.scalars(select(ClinicalAction).where(ClinicalAction.patient_id == patient.id, ClinicalAction.kind == "referral",
                                                        ClinicalAction.status.in_(["proposed", "confirmed"]))).all()
-    if any(e.level == "mandatory" or e.level == r["level"] for e in existing):
-        return
-    for e in existing:  # повышение уровня: desirable -> mandatory
-        if e.status == "proposed":
-            e.status, e.comment = "rejected", "Заменено направлением более высокого уровня"
-    title = "Направление к психиатру: " + ("ОБЯЗАТЕЛЬНО" if r["level"] == "mandatory" else "ЖЕЛАТЕЛЬНО")
-    db.add(ClinicalAction(patient_id=patient.id, kind="referral", level=r["level"], title=title,
-                          payload={"reasons": r["reasons"]}, sources=sorted({x["source"] for x in r["reasons"] if x.get("source")})))
+    for route in r["routes"]:
+        if not route["level"]:
+            continue
+        same = [e for e in existing if (e.payload or {}).get("target", "psychiatrist") == route["target"]]
+        if any(e.level == "mandatory" or e.level == route["level"] for e in same):
+            continue
+        for e in same:  # повышение уровня: желательно -> обязательно
+            if e.status == "proposed":
+                e.status = "rejected"
+                e.comment = "Заменено направлением более высокого уровня"
+        mark = "ОБЯЗАТЕЛЬНО" if route["level"] == "mandatory" else "ЖЕЛАТЕЛЬНО"
+        db.add(ClinicalAction(patient_id=patient.id, kind="referral", level=route["level"], title=f"{route['title']}: {mark}",
+                              payload={"target": route["target"], "urgency": route["urgency"], "reasons": route["reasons"]},
+                              sources=sorted({x["source"] for x in route["reasons"] if x.get("source")})))
 
 
 def risk_score(ctx: dict, alerts: list[Alert]) -> int:
