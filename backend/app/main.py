@@ -16,7 +16,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 
 import os
 
-from . import auth, backup
+from . import auth, backup, notify
 from .api import admin, doctor, metrics, patient
 from .api import auth as auth_api
 from . import bus as bus_mod
@@ -66,6 +66,7 @@ def escalate_once() -> int:
             a.escalated_to, a.escalated_at = duty.id, t
             auth.audit(db, None, "alert_escalated", "alert", a.id, patient_id=a.patient_id, to_user=duty.id)
             bus_mod.enqueue(db, doctor_channel(duty.id), "alert", {**alerts.alert_event(a), "escalated": True})
+            notify.enqueue_for_alert(db, a, db.get(Patient, a.patient_id), duty.id, escalated=True)
             db.commit()
             n += 1
     return n
@@ -93,6 +94,11 @@ def maintenance_once() -> None:
             f.write(f"{now().isoformat()} {head}\n")
 
 
+def notify_once() -> None:
+    with WriteSession() as db:
+        notify.send_pending(db)
+
+
 def backup_once() -> None:
     if os.getenv("DATABASE_URL", "sqlite").startswith("sqlite"):
         backup.create()
@@ -116,6 +122,7 @@ async def lifespan(app: FastAPI):
     await bus.start()
     tasks = [asyncio.create_task(_loop(escalate_once, ESCALATION_CHECK_SEC)),
              asyncio.create_task(_loop(maintenance_once, 60)),
+             asyncio.create_task(_loop(notify_once, 5)),
              asyncio.create_task(_loop(backup_once, int(os.getenv("BACKUP_INTERVAL_MIN", "15")) * 60))]
     yield
     for t in tasks:

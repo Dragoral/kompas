@@ -152,7 +152,8 @@ def decide(vid: int, data: DecideIn, request: Request, user: User = Depends(revi
 def user_dict(u: User) -> dict:
     return {"id": u.id, "login": u.login, "role": u.role, "full_name": u.full_name, "specialty": u.specialty,
             "frmr_id": u.frmr_id, "is_duty": u.is_duty, "is_reviewer": u.is_reviewer, "active": u.active,
-            "mfa_enabled": bool(u.totp_secret_enc), "locked_until": u.locked_until, "created_at": u.created_at}
+            "mfa_enabled": bool(u.totp_secret_enc), "has_phone": bool(u.phone_enc), "locked_until": u.locked_until,
+            "created_at": u.created_at}
 
 
 @router.get("/users")
@@ -171,6 +172,7 @@ class StaffIn(BaseModel):
     frmr_id: str | None = Field(None, max_length=32)
     is_duty: bool = False
     is_reviewer: bool = False
+    phone: str | None = Field(None, pattern=r"^\+?[0-9 ()-]{10,20}$")
 
 
 @router.post("/users")
@@ -182,6 +184,7 @@ def create_user(data: StaffIn, request: Request, user: User = Depends(admin_only
     password = secrets.token_urlsafe(12)  # выдаётся один раз; смена при первом входе
     u = User(login=data.login, password_hash=auth.hash_password(password), role=data.role, full_name=data.full_name,
              specialty=data.specialty, frmr_id=data.frmr_id, is_duty=data.is_duty, is_reviewer=data.is_reviewer)
+    u.phone = data.phone
     db.add(u)
     db.flush()
     auth.audit(db, user, "user_created", "user", u.id, ip=auth.client_ip(request), role=data.role)
@@ -196,6 +199,7 @@ class StaffPatch(BaseModel):
     is_duty: bool | None = None
     is_reviewer: bool | None = None
     active: bool | None = None
+    phone: str | None = Field(None, pattern=r"^\+?[0-9 ()-]{10,20}$")
 
 
 @router.patch("/users/{uid}")

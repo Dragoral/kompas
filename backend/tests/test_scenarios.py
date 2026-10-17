@@ -154,3 +154,20 @@ def test_login_lockout(client):
     for _ in range(5):
         assert client.post("/api/auth/login", json={"login": "patient4", "password": "wrong-password"}).status_code == 401
     assert client.post("/api/auth/login", json={"login": "patient4", "password": PASSWORD}).status_code == 429
+
+
+def test_critical_alert_queues_sms_without_phi(client, tokens):
+    from app import notify
+    from app.db import WriteSession
+    from app.models import Notification
+    r = client.post("/api/me/scales", headers=tokens["patient5"],
+                    json={"scale_code": "PHQ9", "answers": phq9(item9=1, total=10), "client_id": str(uuid.uuid4())})
+    assert r.json()["crisis"] is True
+    with WriteSession() as db:
+        pend = db.query(Notification).filter(Notification.status == "pending").all()
+        assert any("P-DEMO5" in n.text for n in pend)
+        forbidden = ("Лебедев", "Новикова", "PHQ", "суицид", "мысли", "Авиандр")
+        assert all(not any(w in n.text for w in forbidden) for n in pend)
+        notify.send_pending(db)
+        assert db.query(Notification).filter(Notification.status == "pending").count() == 0
+        assert db.query(Notification).filter(Notification.status == "sent").count() >= 1

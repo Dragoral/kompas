@@ -75,6 +75,7 @@ class User(Base):
     is_duty: Mapped[bool] = mapped_column(Boolean, default=False)  # дежурный врач: экстренное реагирование (193н п. 44)
     is_reviewer: Mapped[bool] = mapped_column(Boolean, default=False)  # клинический рецензент изменений справочников
     totp_secret_enc: Mapped[str | None] = mapped_column(Text)  # 2FA, зашифрован ключом приложения
+    phone_enc: Mapped[str | None] = mapped_column(Text)  # для экстренных SMS, зашифрован ключом приложения
     failed_logins: Mapped[int] = mapped_column(Integer, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime)
     password_changed_at: Mapped[datetime] = mapped_column(DateTime, default=now)
@@ -88,6 +89,14 @@ class User(Base):
     @totp_secret.setter
     def totp_secret(self, v: str | None):
         self.totp_secret_enc = vault.seal_app("users.totp", v) if v else None
+
+    @property
+    def phone(self) -> str | None:
+        return vault.open_app("users.phone", self.phone_enc) if self.phone_enc else None
+
+    @phone.setter
+    def phone(self, v: str | None):
+        self.phone_enc = vault.seal_app("users.phone", v) if v else None
 
 
 class AuthSession(Base):
@@ -432,3 +441,21 @@ class Visit(Base):
     notes = Sealed("notes_enc")
     plan: Mapped[dict] = mapped_column(JSON, default=dict)  # структурированный план: следующий визит, шкалы, задачи
     next_visit_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class Notification(Base):
+    """Внешние уведомления (SMS/звонок) по критическим алертам. Документирование
+    отправки и доставки — 193н п. 46 «д». Текст без медицинских сведений (3185-1 ст. 9)."""
+    __tablename__ = "notifications"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    alert_id: Mapped[int | None] = mapped_column(ForeignKey("alerts.id"), index=True)
+    channel: Mapped[str] = mapped_column(String(16))  # sms | call
+    text: Mapped[str] = mapped_column(String(320))
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending | sent | failed
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    provider: Mapped[str | None] = mapped_column(String(32))
+    provider_id: Mapped[str | None] = mapped_column(String(64))
+    last_error: Mapped[str | None] = mapped_column(String(256))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime)

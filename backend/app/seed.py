@@ -59,6 +59,8 @@ def add_scale(db, kb, p: Patient, code: str, total: int, at: datetime, by: User,
 
 def user(db, login, role, full_name, specialty=None, duty=False) -> User:
     u = User(login=login, password_hash=auth.hash_password(PASSWORD), role=role, full_name=full_name, specialty=specialty, is_duty=duty)
+    if role == "doctor":
+        u.phone = "+7 900 000-00-00"  # фиктивный номер демо-стенда
     db.add(u)
     db.flush()
     return u

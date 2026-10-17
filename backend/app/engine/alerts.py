@@ -12,7 +12,7 @@ from datetime import date, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import bus
+from .. import bus, notify
 from ..bus import doctor_channel, patient_channel
 from ..models import Alert, ClinicalAction, Patient, ScaleAssignment, now
 from . import context, knowledge, logic, recommend
@@ -79,6 +79,8 @@ def process(db: Session, patient: Patient, trigger_ref: str, received_at: dateti
         bus.enqueue(db, doctor_channel(alert.doctor_id), "alert", alert_event(alert))
         if any(_action_name(a) == "crisis_screen" for a in alert.actions):
             bus.enqueue(db, patient_channel(patient.id), "crisis", {"alert_id": alert.id})
+        if alert.severity == "critical":  # экстренное оповещение вне кабинета (SMS)
+            notify.enqueue_for_alert(db, alert, patient, alert.doctor_id)
     return created
 
 
