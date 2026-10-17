@@ -120,5 +120,7 @@ def recommend(ctx: dict, kb: dict, drug_ids: list[str] | None = None) -> dict:
         "guidelines": guidelines.evaluate(ctx, kb),
         "guidelines_note": None if guidelines.applicable(ctx, kb) else
             "Для диагнозов пациента клинические рекомендации в справочнике не загружены — рекомендации только по инструкции к препаратам",
+        "knowledge_versions": {f"{k}:{c}": v for (k, c), v in kb.get("versions", {}).items()
+                               if k in ("drug", "guideline") or (k, c) == ("rules", "routing")},
         "elapsed_ms": round((time.perf_counter() - t0) * 1000, 2),
     }

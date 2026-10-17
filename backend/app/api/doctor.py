@@ -15,7 +15,7 @@ from ..crypto import vault
 from ..db import defer_write, get_db
 from ..engine import alerts, context, extract, fhir, knowledge, recommend
 from ..models import (AdverseEvent, Alert, ClinicalAction, Document, Message, Patient, Prescription, ScaleAssignment,
-                      ScaleResult, User, now)
+                      ScaleResult, User, Visit, now)
 from .patient import _last_id, history_for, sse
 
 router = APIRouter(prefix="/api/doctor", tags=["doctor"])
@@ -166,6 +166,7 @@ def card(pid: int, request: Request, user: User = Depends(doctor_only), db: Sess
         "documents": [{"id": d.id, "filename": d.filename, "extractor": d.extractor, "applied": d.applied, "created_at": d.created_at}
                       for d in db.scalars(select(Document).where(Document.patient_id == p.id).order_by(Document.created_at.desc()))],
         "history": history_for(db, p.id, 180),
+        "visits": [visit_dict(v) for v in db.scalars(select(Visit).where(Visit.patient_id == p.id).order_by(Visit.at.desc()).limit(20))],
     }
     db.commit()
     return res
@@ -201,13 +202,45 @@ def patch_patient(pid: int, data: PatientPatch, request: Request, user: User = D
     return {"ok": True}
 
 
+class VisitIn(BaseModel):
+    kind: str = Field("in_person", pattern="^(in_person|telemedicine|async)$")
+    reason: str | None = Field(None, max_length=256)
+    notes: str | None = Field(None, max_length=20000)
+    plan: dict = Field(default_factory=dict)
+    next_visit_at: datetime | None = None
+    diagnosis_confirmed: bool = True
+
+
+def visit_dict(v: Visit) -> dict:
+    return {"id": v.id, "kind": v.kind, "at": v.at, "doctor_id": v.doctor_id, "reason": v.reason, "notes": v.notes,
+            "plan": v.plan, "next_visit_at": v.next_visit_at}
+
+
+@router.post("/patients/{pid}/visits")
+def add_visit(pid: int, data: VisitIn, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    """Визит. Очный приём с установлением диагноза — основание для дистанционного
+    наблюдения и дистанционной коррекции терапии (193н п. 38, 43)."""
+    p = _p(user, pid, db, request, "visit")
+    v = Visit(patient_id=p.id, doctor_id=user.id, kind=data.kind, at=now(), reason=data.reason, plan=data.plan,
+              next_visit_at=data.next_visit_at)
+    db.add(v)
+    v.notes = data.notes
+    if data.kind == "in_person" and data.diagnosis_confirmed:
+        p.in_person_visit_at, p.diagnosis_confirmed_by = v.at, user.id
+    db.commit()
+    return visit_dict(v)
+
+
 @router.post("/patients/{pid}/visit")
 def register_visit(pid: int, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
-    """Очный приём: основание для дистанционного наблюдения и дистанционной коррекции терапии (193н п. 38, 43)."""
-    p = _p(user, pid, db, request, "visit")
-    p.in_person_visit_at, p.diagnosis_confirmed_by = now(), user.id
-    db.commit()
-    return {"ok": True, "in_person_visit_at": p.in_person_visit_at}
+    """Короткая форма: отметить очный приём."""
+    return add_visit(pid, VisitIn(), request, user, db)
+
+
+@router.get("/patients/{pid}/visits")
+def list_visits(pid: int, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    p = _p(user, pid, db, request, "visits")
+    return [visit_dict(v) for v in db.scalars(select(Visit).where(Visit.patient_id == p.id).order_by(Visit.at.desc()))]
 
 
 class MonitoringIn(BaseModel):

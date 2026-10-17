@@ -24,7 +24,7 @@ from .config import BASE_DIR
 from .crypto import vault
 from .db import Base, WriteSession as SessionLocal, engine
 from .engine import alerts, knowledge, scales
-from .models import AdverseEvent, DiaryEntry, DoseLog, Patient, Prescription, ScaleAssignment, ScaleResult, User, now
+from .models import AdverseEvent, DiaryEntry, DoseLog, Patient, Prescription, ScaleAssignment, ScaleResult, User, Visit, now
 from .services import schedule_doses
 
 PASSWORD = "Kompas-demo-2026"
@@ -76,6 +76,10 @@ def patient(db, login, doctor: User, full_name, birth, sex, profile, diagnoses, 
     p.birth_date = birth
     p.contacts = json.dumps({"phone": "+7 900 000-00-0" + login[-1], "emergency_contact": None})
     p.name_bidx = vault.blind_index(full_name)
+    v = Visit(patient_id=p.id, doctor_id=doctor.id, kind="in_person", at=p.in_person_visit_at,
+              reason="Первичный приём", plan={"remote_monitoring": True})
+    db.add(v)
+    v.notes = "Синтетическая запись для демонстрации"
     return p
 
 
@@ -119,6 +123,7 @@ def run(reset: bool) -> None:
             return
         kb = knowledge.get(db)
         psy = user(db, "psychiatrist", "doctor", "Петрова Анна Сергеевна", "psychiatrist")
+        psy.is_reviewer = True  # клинический рецензент изменений справочников
         ter = user(db, "therapist", "doctor", "Иванов Сергей Викторович", "therapist")
         user(db, "duty", "doctor", "Смирнов Олег Игоревич (дежурный)", "psychiatrist", duty=True)
         user(db, "admin", "admin", "Администратор")

@@ -54,6 +54,7 @@ def process(db: Session, patient: Patient, trigger_ref: str, received_at: dateti
             patient_id=patient.id,
             doctor_id=patient.doctor_id,
             rule_id=rule["id"],
+            rules_version=kb["versions"].get(("rules", "alerts"), 1),
             severity=rule["severity"],
             title=rule["title"],
 

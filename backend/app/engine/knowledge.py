@@ -16,7 +16,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import KNOWLEDGE_DIR
-from ..models import KnowledgeItem, now
+import hashlib
+
+from ..models import KnowledgeItem, KnowledgeVersion, now
 from . import logic
 
 KINDS = {"scales": "scale", "drugs": "drug", "rules": "rules", "guidelines": "guideline"}
@@ -42,20 +44,55 @@ def load_yaml_dir(root: Path = KNOWLEDGE_DIR) -> list[tuple[str, str, dict]]:
     return items
 
 
-def seed(db: Session, overwrite: bool = False) -> int:
+def body_hash(body: dict) -> str:
+    return hashlib.sha256(json.dumps(body, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+
+
+def seed(db: Session, propose_changes: bool = False, user_id: int | None = None) -> int:
+    """Первичная загрузка из репозитория (версия 1, одобрена). При propose_changes
+    изменения в YAML относительно действующих версий оформляются как черновики,
+    которые вступают в силу только после клинического одобрения."""
     n = 0
     for kind, code, body in load_yaml_dir():
         validate(kind, body)
         row = db.scalar(select(KnowledgeItem).where(KnowledgeItem.kind == kind, KnowledgeItem.code == code))
         if row is None:
             db.add(KnowledgeItem(kind=kind, code=code, body=body))
+            db.add(KnowledgeVersion(kind=kind, code=code, version=1, body=body, body_sha256=body_hash(body),
+                                    status="approved", change_note="Загрузка из репозитория", decided_at=now()))
             n += 1
-        elif overwrite:
-            row.body, row.version, row.updated_at = body, row.version + 1, now()
+        elif propose_changes and body_hash(body) != body_hash(row.body):
+            propose(db, kind, code, body, user_id, "Обновление из репозитория")
             n += 1
     db.commit()
     invalidate()
     return n
+
+
+def propose(db: Session, kind: str, code: str, body: dict, user_id: int | None, note: str | None) -> KnowledgeVersion:
+    validate(kind, body)
+    v = KnowledgeVersion(kind=kind, code=code, body=body, body_sha256=body_hash(body), status="draft",
+                         change_note=note, proposed_by=user_id)
+    db.add(v)
+    db.flush()
+    return v
+
+
+def approve(db: Session, v: KnowledgeVersion, reviewer_id: int, comment: str | None) -> KnowledgeItem:
+    """Ввод одобренной версии в действие; предыдущая помечается superseded."""
+    validate(v.kind, v.body)
+    row = db.scalar(select(KnowledgeItem).where(KnowledgeItem.kind == v.kind, KnowledgeItem.code == v.code))
+    for old in db.scalars(select(KnowledgeVersion).where(KnowledgeVersion.kind == v.kind, KnowledgeVersion.code == v.code,
+                                                         KnowledgeVersion.status == "approved")):
+        old.status = "superseded"
+    if row is None:
+        row = KnowledgeItem(kind=v.kind, code=v.code, body=v.body, version=1, updated_by=reviewer_id)
+        db.add(row)
+    else:
+        row.body, row.version, row.updated_at, row.updated_by, row.active = v.body, row.version + 1, now(), reviewer_id, True
+    v.status, v.version, v.decided_by, v.decided_at, v.decision_comment = "approved", row.version, reviewer_id, now(), comment
+    invalidate()
+    return row
 
 
 def validate(kind: str, body: dict) -> None:

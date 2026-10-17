@@ -73,6 +73,7 @@ class User(Base):
     specialty: Mapped[str | None] = mapped_column(String(32))  # psychiatrist | therapist | neurologist ...
     frmr_id: Mapped[str | None] = mapped_column(String(32))  # Федеральный регистр медработников (193н п. 9)
     is_duty: Mapped[bool] = mapped_column(Boolean, default=False)  # дежурный врач: экстренное реагирование (193н п. 44)
+    is_reviewer: Mapped[bool] = mapped_column(Boolean, default=False)  # клинический рецензент изменений справочников
     totp_secret_enc: Mapped[str | None] = mapped_column(Text)  # 2FA, зашифрован ключом приложения
     failed_logins: Mapped[int] = mapped_column(Integer, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime)
@@ -395,3 +396,39 @@ class Lease(Base):
     name: Mapped[str] = mapped_column(String(32), primary_key=True)
     holder: Mapped[str] = mapped_column(String(64))
     expires_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class KnowledgeVersion(Base):
+    """История версий справочников и клиническое одобрение изменений.
+    Изменение вступает в силу только после одобрения врачом-рецензентом,
+    который не является автором изменения (принцип «четырёх глаз»)."""
+    __tablename__ = "knowledge_versions"
+    __table_args__ = (Index("ix_kv_item", "kind", "code", "version"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    code: Mapped[str] = mapped_column(String(64))
+    version: Mapped[int | None] = mapped_column(Integer)  # присваивается при одобрении
+    body: Mapped[dict] = mapped_column(JSON)
+    body_sha256: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16), default="draft", index=True)  # draft | approved | rejected | superseded
+    change_note: Mapped[str | None] = mapped_column(Text)
+    proposed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))  # None — загрузка из репозитория
+    proposed_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime)
+    decision_comment: Mapped[str | None] = mapped_column(Text)
+
+
+class Visit(Base):
+    """Визит: очный приём, телемедицинская консультация или отложенная консультация (193н п. 15)."""
+    __tablename__ = "visits"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"), index=True)
+    doctor_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    kind: Mapped[str] = mapped_column(String(16))  # in_person | telemedicine | async
+    at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    reason: Mapped[str | None] = mapped_column(String(256))
+    notes_enc: Mapped[str | None] = mapped_column(Text)
+    notes = Sealed("notes_enc")
+    plan: Mapped[dict] = mapped_column(JSON, default=dict)  # структурированный план: следующий визит, шкалы, задачи
+    next_visit_at: Mapped[datetime | None] = mapped_column(DateTime)

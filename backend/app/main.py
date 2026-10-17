@@ -169,5 +169,5 @@ async def envelope(request: Request, call_next):
     return response
 
 
-for r in (auth_api.router, patient.router, doctor.router, admin.router, metrics.router):
+for r in (auth_api.router, patient.router, doctor.router, admin.router, admin.review, metrics.router):
     app.include_router(r)
