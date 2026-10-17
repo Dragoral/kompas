@@ -91,6 +91,14 @@ rules:
     actions: [notify_doctor]
     source: "Порог 80% — общепринятый критерий приверженности (WHO, 2003)"
 
+  - id: recommendations_not_followed
+    severity: medium
+    title: Не выполняются рекомендации врача
+    when: { or: [{ "<": [{ var: adherence.diary_pct }, 40] }, { some_in: [["PHQ9", "GAD7", "CSSRS"], { var: adherence.scales_overdue }] }] }
+    message: "Дневник заполнен в {adherence.diary_pct}% дней; просрочены шкалы: {adherence.scales_overdue}"
+    actions: [notify_doctor]
+    source: "КР 457, раздел 3.2: при недостаточном эффекте — удостовериться в комплаентности"
+
   - id: no_contact
     severity: medium
     title: Пациент не выходит на связь

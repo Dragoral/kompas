@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import AdverseEvent, DiaryEntry, DoseLog, Message, Patient, Prescription, ScaleResult, User, now
+from ..models import AdverseEvent, DiaryEntry, DoseLog, Message, Patient, Prescription, ScaleAssignment, ScaleResult, User, now
 from . import knowledge
 
 # Лексический скрининг высказываний о самоповреждении (финальная оценка — врач).
@@ -114,7 +114,8 @@ def build(db: Session, patient: Patient, at: datetime | None = None) -> dict:
     }
     since = at - timedelta(days=14)
     doses = db.scalars(
-        select(DoseLog).where(DoseLog.patient_id == patient.id, DoseLog.scheduled_for >= since, DoseLog.scheduled_for <= at).order_by(DoseLog.scheduled_for)
+        select(DoseLog).where(DoseLog.patient_id == patient.id, DoseLog.scheduled_for >= since,
+                            DoseLog.scheduled_for <= at - timedelta(hours=3))  # 3 ч на приём, потом — пропуск.order_by(DoseLog.scheduled_for)
     ).all()
     taken = sum(1 for d in doses if d.status == "taken")
     streak = 0
@@ -122,10 +123,24 @@ def build(db: Session, patient: Patient, at: datetime | None = None) -> dict:
         if d.status == "taken":
             break
         streak += 1
+    # Выполнение рекомендаций врача: дневник и назначенные шкалы
+    window = 14
+    if patient.in_person_visit_at:
+        window = max(1, min(14, (at.date() - patient.in_person_visit_at.date()).days + 1))
+    diary_days = len({d.day for d in diary if (at.date() - d.day).days < window})
+    overdue = db.scalars(select(ScaleAssignment).where(
+        ScaleAssignment.patient_id == patient.id, ScaleAssignment.active.is_(True),
+        ScaleAssignment.next_due < at.date() - timedelta(days=2))).all()
+    dose_pct = round(taken * 100 / len(doses)) if doses else None
+    diary_pct = round(diary_days * 100 / window) if window >= 3 else None  # первые дни наблюдения не оцениваем
+    parts = [x for x in (dose_pct, diary_pct) if x is not None]
     ctx["adherence"] = {
-        "pct_14d": round(taken * 100 / len(doses)) if doses else None,
+        "pct_14d": dose_pct,
         "missed_streak": streak if doses else None,
         "doses_14d": len(doses),
+        "diary_pct": diary_pct,
+        "scales_overdue": sorted({a.scale_code for a in overdue}),
+        "overall_pct": round(sum(parts) / len(parts)) if parts else None,
     }
 
     # Нежелательные явления
