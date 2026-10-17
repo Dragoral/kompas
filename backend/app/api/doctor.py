@@ -4,7 +4,7 @@ import json
 import secrets
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
@@ -30,12 +30,31 @@ def _p(user: User, patient_id: int, db: Session, request: Request | None = None,
 
 # --- список пациентов (автотриаж) --------------------------------------------
 @router.get("/patients")
-def list_patients(q: str | None = None, only_alerts: bool = False, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+def list_patients(response: Response,
+                  q: str | None = Query(None, max_length=128, description="Код пациента или часть ФИО"),
+                  only_alerts: bool = False,
+                  severity: str | None = Query(None, pattern="^(critical|high|medium)$", description="Есть открытый алерт не ниже уровня"),
+                  icd: str | None = Query(None, max_length=8, description="Диагноз МКБ-10 (префикс), напр. F41"),
+                  drug: str | None = Query(None, max_length=64, description="Текущая терапия, id препарата"),
+                  referral: str | None = Query(None, pattern="^(mandatory|desirable)$"),
+                  adherence_below: int | None = Query(None, ge=0, le=100),
+                  scale: str | None = Query(None, max_length=16), min_score: int | None = None,
+                  monitoring: bool | None = None,
+                  sort: str = Query("risk", pattern="^(risk|name|age|last_diary)$"), desc: bool = True,
+                  limit: int = Query(200, ge=1, le=1000), offset: int = Query(0, ge=0),
+                  user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    """Список своих пациентов: автотриаж по риску, поиск и фильтры. ФИО хранится
+    зашифрованным, поэтому поиск по части ФИО выполняется по расшифрованным данным
+    только своих пациентов (в памяти, не в БД)."""
     stmt = select(Patient).where(Patient.doctor_id == user.id, Patient.erased_at.is_(None))
-    if q:
-        q = q.strip()
-        stmt = stmt.where((Patient.code == q.upper()) | (Patient.name_bidx == vault.blind_index(q)))
+    if monitoring is not None:
+        stmt = stmt.where(Patient.monitoring_active.is_(monitoring))
     patients = db.scalars(stmt.order_by(Patient.risk_score.desc())).all()
+    if q:
+        needle = q.strip().lower().replace("ё", "е")
+        patients = [p for p in patients if p.code.lower() == needle or needle in (p.full_name or "").lower().replace("ё", "е")]
+    if icd:
+        patients = [p for p in patients if any(d["icd10"].startswith(icd.upper()) for d in p.diagnoses)]
     ids = [p.id for p in patients]
     open_alerts: dict[int, dict] = {}
     for a in db.scalars(select(Alert).where(Alert.patient_id.in_(ids), Alert.status != "resolved")):
@@ -47,8 +66,13 @@ def list_patients(q: str | None = None, only_alerts: bool = False, user: User = 
         ClinicalAction.patient_id.in_(ids), ClinicalAction.status == "proposed").group_by(ClinicalAction.patient_id)).all())
     out = []
     kb = knowledge.get(db)
+    rank = {"medium": 1, "high": 2, "critical": 3}
     for p in patients:
         if only_alerts and p.id not in open_alerts:
+            continue
+        if severity and not any(rank[s] >= rank[severity] and n for s, n in open_alerts.get(p.id, {}).items()):
+            continue
+        if referral and referrals.get(p.id) != referral:
             continue
         ctx = context.build(db, p)
         rx = db.scalar(select(Prescription).where(Prescription.patient_id == p.id, Prescription.status == "active"))
@@ -61,9 +85,22 @@ def list_patients(q: str | None = None, only_alerts: bool = False, user: User = 
             "adherence_pct": ctx["adherence"]["pct_14d"],
             "alerts": open_alerts.get(p.id, {}), "referral": referrals.get(p.id), "pending_actions": pending.get(p.id, 0),
             "last_diary_days": ctx["diary"]["days_since_last"],
+            "_drug_id": rx.drug_id if rx else None,
         })
+    if drug:
+        out = [x for x in out if x["_drug_id"] == drug]
+    if adherence_below is not None:
+        out = [x for x in out if x["adherence_pct"] is not None and x["adherence_pct"] < adherence_below]
+    if scale:
+        out = [x for x in out if scale in x["scales"] and (min_score is None or x["scales"][scale]["score"] >= min_score)]
+    keys = {"risk": lambda x: x["risk_score"], "name": lambda x: x["full_name"] or "", "age": lambda x: x["age"] or 0,
+            "last_diary": lambda x: x["last_diary_days"] if x["last_diary_days"] is not None else 10**6}
+    out.sort(key=keys[sort], reverse=desc)
+    for x in out:
+        x.pop("_drug_id")
+    response.headers["X-Total-Count"] = str(len(out))
     db.commit()
-    return out
+    return out[offset:offset + limit]
 
 
 # --- создание пациента -----------------------------------------------------

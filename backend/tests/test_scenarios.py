@@ -171,3 +171,16 @@ def test_critical_alert_queues_sms_without_phi(client, tokens):
         notify.send_pending(db)
         assert db.query(Notification).filter(Notification.status == "pending").count() == 0
         assert db.query(Notification).filter(Notification.status == "sent").count() >= 1
+
+
+def test_patient_list_filters(client, tokens):
+    h = tokens["psychiatrist"]
+    by_name = client.get("/api/doctor/patients", headers=h, params={"q": "соколова"}).json()
+    assert [p["code"] for p in by_name] == ["P-DEMO1"]
+    gad = client.get("/api/doctor/patients", headers=h, params={"icd": "F41.1"}).json()
+    assert {p["code"] for p in gad} >= {"P-DEMO1", "P-DEMO4"}
+    low = client.get("/api/doctor/patients", headers=h, params={"adherence_below": 80}).json()
+    assert "P-DEMO6" in {p["code"] for p in low} and "P-DEMO1" not in {p["code"] for p in low}
+    r = client.get("/api/doctor/patients", headers=h, params={"sort": "age", "desc": False, "limit": 1})
+    assert len(r.json()) == 1 and int(r.headers["X-Total-Count"]) >= 3
+    assert client.get("/api/doctor/patients", headers=h, params={"severity": "bad"}).status_code == 422

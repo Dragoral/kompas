@@ -17,7 +17,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 import os
 
 from . import auth, backup, notify
-from .api import admin, doctor, metrics, patient
+from .api import admin, analytics, doctor, metrics, patient
 from .api import auth as auth_api
 from . import bus as bus_mod
 from .bus import bus, doctor_channel
@@ -176,5 +176,5 @@ async def envelope(request: Request, call_next):
     return response
 
 
-for r in (auth_api.router, patient.router, doctor.router, admin.router, admin.review, metrics.router):
+for r in (auth_api.router, patient.router, doctor.router, admin.router, admin.review, analytics.router, metrics.router):
     app.include_router(r)

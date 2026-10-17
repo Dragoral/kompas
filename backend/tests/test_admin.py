@@ -53,3 +53,14 @@ def test_visits(client, tokens):
     assert v["kind"] == "telemedicine" and v["notes"] == "Самочувствие стабильное"
     vs = client.get(f"/api/doctor/patients/{p}/visits", headers=tokens["psychiatrist"]).json()
     assert len(vs) >= 2 and {x["kind"] for x in vs} >= {"in_person", "telemedicine"}
+
+
+def test_anonymized_analytics_suppresses_small_groups(client, tokens):
+    assert client.get("/api/analytics/summary", headers=tokens["therapist"]).status_code == 403
+    r = client.get("/api/analytics/summary", headers=tokens["admin"]).json()
+    assert r["k_anonymity"] == 5
+    text = str(r)
+    for name in ("Соколова", "Лебедев", "P-DEMO"):
+        assert name not in text  # ни ФИО, ни псевдонимов
+    assert all(v == "< 5" or (isinstance(v, int) and v >= 5) for v in r["patients_by_diagnosis"].values())
+    assert client.get("/api/analytics/summary", headers=tokens["admin"], params={"k": 2}).status_code == 422
