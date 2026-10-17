@@ -76,10 +76,19 @@ def _sentences(text: str) -> list[str]:
     return [s for s in re.split(r"(?<=[.!?;\n])\s+", text) if s.strip()]
 
 
-def _negated(sentence: str, start: int) -> bool:
-    """Есть ли отрицание перед упоминанием в пределах той же клаузы."""
-    clause = re.split(r"[,:]", sentence[:start])[-1]
-    return bool(NEG.search(clause))
+POST_NEG = re.compile(r"^\s*(?:\w+\s+){0,2}?(?:отрица\w*|нет\b|не\s+(?:выявлен|обнаружен|отмечает|было)\w*|исключен\w*)", re.I)
+
+
+def _negated(sentence: str, start: int, end: int | None = None) -> bool:
+    """Отрицание в пределах той же клаузы: перед упоминанием («без эпилепсии»,
+    «отрицает …») или сразу после («беременность отрицает», «эпилепсии нет»)."""
+    before = re.split(r"[,:;]", sentence[:start])[-1]
+    if NEG.search(before):
+        return True
+    if end is not None:
+        after = re.split(r"[,.;:]", sentence[end:])[0]
+        return bool(POST_NEG.search(after))
+    return False
 
 
 def _find_all(pattern: str, text: str):
@@ -100,7 +109,7 @@ def extract_rules(text: str, kb: dict) -> dict:
             if letter not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
                 continue
             code = f"{letter}{m.group(2)}" + (f".{m.group(3)}" if m.group(3) else "")
-            if code in seen or _negated(s, m.start()):
+            if code in seen or _negated(s, m.start(), m.end()):
                 continue
             seen.add(code)
             title = re.sub(r"^[\s:—–-]+", "", s[m.end():m.end() + 120]).split(".")[0].split(";")[0].strip(" ()")
@@ -108,7 +117,7 @@ def extract_rules(text: str, kb: dict) -> dict:
     # Диагнозы словами — если кода с той же рубрикой нет
     for pattern, code, title in DX_TEXT:
         for s, m in _find_all(pattern, text):
-            if _negated(s, m.start()):
+            if _negated(s, m.start(), m.end()):
                 continue
             if not any(d["icd10"].startswith(code[:3]) for d in out["diagnoses"]):
                 out["diagnoses"].append({"icd10": code, "title": title, "source": "text"})
@@ -151,7 +160,7 @@ def extract_rules(text: str, kb: dict) -> dict:
     conds = set()
     for pattern, tag in CONDITIONS:
         for s, m in _find_all(pattern, text):
-            if not _negated(s, m.start()):
+            if not _negated(s, m.start(), m.end()):
                 conds.add(tag)
                 break
     out["conditions"] = sorted(conds)
@@ -161,13 +170,13 @@ def extract_rules(text: str, kb: dict) -> dict:
     if (m := re.search(r"Чайлд[\s-]*Пью\D{0,15}?([ABCАВС])\b", text, re.I)):
         out["child_pugh"] = m.group(1).upper().translate(_LAT)
     for s, m in _find_all(r"беременн\w*", text):
-        out["pregnant"] = not _negated(s, m.start()) and not re.search(r"планир", s, re.I)
+        out["pregnant"] = not _negated(s, m.start(), m.end()) and not re.search(r"планир", s, re.I)
         break
     for s, m in _find_all(r"грудн\w*\s+вскармлив\w*|лактаци\w*", text):
-        out["lactating"] = not _negated(s, m.start())
+        out["lactating"] = not _negated(s, m.start(), m.end())
         break
     for s, m in _find_all(r"COVID|коронавирус\w*|ковид\w*|SARS-CoV-2", text):
-        out["post_covid"] = not _negated(s, m.start())
+        out["post_covid"] = not _negated(s, m.start(), m.end())
         break
 
     for code, rx in SCALES.items():
