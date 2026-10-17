@@ -1,0 +1,42 @@
+# Развёртывание: PostgreSQL + API. Секреты — в файле .env рядом (не в git):
+#   POSTGRES_PASSWORD=...   MASTER_KEYS=k1:<base64 32 байта>   DEMO_PASSWORD=...
+# Ключ: python -c "import os,base64;print('k1:'+base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip('='))"
+name: kompas
+
+services:
+  db:
+    image: postgres:16.4-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: kompas
+      POSTGRES_USER: kompas
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?задайте POSTGRES_PASSWORD в .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kompas -d kompas"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://kompas:${POSTGRES_PASSWORD}@db:5432/kompas
+      MASTER_KEYS: ${MASTER_KEYS:?задайте MASTER_KEYS в .env}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-Kompas-demo-2026}
+      WORKERS: ${WORKERS:-4}
+      NOTIFY_PROVIDER: ${NOTIFY_PROVIDER:-log}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - apidata:/app/data
+
+volumes:
+  pgdata:
+  apidata:

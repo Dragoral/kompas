@@ -23,7 +23,9 @@ from . import bus as bus_mod
 from .bus import bus, doctor_channel
 from .config import BASE_DIR, CORS_ORIGINS, ESCALATION_CHECK_SEC
 from .crypto import vault
-from .db import Base, SessionLocal, WriteSession, engine
+from sqlalchemy.orm import Session
+
+from .db import IS_SQLITE, Base, SessionLocal, WriteSession, engine
 from .engine import alerts, knowledge
 from .models import Alert, Event, Lease, Message, Patient, StreamTicket, User, now
 
@@ -54,6 +56,9 @@ def escalate_once() -> int:
     """Критический алерт без подтверждения дольше порога -> дежурному врачу (193н п. 44, 46 «л»)."""
     n = 0
     with WriteSession() as db:
+        kb = knowledge.get(db)
+        if not notify.policy(kb).get("duty_service"):
+            return 0
         t = now()
         pending = db.scalars(select(Alert).where(Alert.status == "new", Alert.escalate_after_min.is_not(None),
                                                  Alert.escalated_to.is_(None))).all()
@@ -66,7 +71,8 @@ def escalate_once() -> int:
             a.escalated_to, a.escalated_at = duty.id, t
             auth.audit(db, None, "alert_escalated", "alert", a.id, patient_id=a.patient_id, to_user=duty.id)
             bus_mod.enqueue(db, doctor_channel(duty.id), "alert", {**alerts.alert_event(a), "escalated": True})
-            notify.enqueue_for_alert(db, a, db.get(Patient, a.patient_id), duty.id, escalated=True)
+            notify.enqueue_escalation(db, kb, a, db.get(Patient, a.patient_id), duty)
+            a.notified = (a.notified or []) + ["дежурная служба (нет подтверждения от лечащего врача)"]
             db.commit()
             n += 1
     return n
@@ -116,9 +122,13 @@ async def _loop(fn, period: float):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    Base.metadata.create_all(engine)
-    with WriteSession() as db:
-        knowledge.seed(db)
+    # Инициализация схемы и справочников — один раз, под блокировкой (несколько процессов стартуют одновременно)
+    with engine.begin() as conn:
+        if not IS_SQLITE:
+            conn.exec_driver_sql("SELECT pg_advisory_xact_lock(724001)")
+        Base.metadata.create_all(conn)
+        with Session(bind=conn) as db:
+            knowledge.seed(db)
     await bus.start()
     tasks = [asyncio.create_task(_loop(escalate_once, ESCALATION_CHECK_SEC)),
              asyncio.create_task(_loop(maintenance_once, 60)),

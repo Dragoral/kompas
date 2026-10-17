@@ -13,7 +13,8 @@ from .. import auth, consent, services
 from ..bus import bus, patient_channel
 from ..db import defer_write, get_db
 from ..engine import alerts, knowledge
-from ..models import AdverseEvent, Alert, DiaryEntry, DoseLog, Message, Prescription, ScaleAssignment, ScaleResult, User, now
+from ..models import (AdverseEvent, Alert, DiaryEntry, DoseLog, Message, Prescription, ScaleAssignment, ScaleResult,
+                      TrustedContact, User, now)
 
 router = APIRouter(prefix="/api", tags=["patient"])
 patient_only = auth.require("patient")
@@ -37,6 +38,57 @@ def scale_def(code: str, user: User = Depends(auth.current_user), db: Session = 
     if user.role == "patient" and s["respondent"] != "patient":
         raise HTTPException(403, "Шкала заполняется врачом")
     return s
+
+
+@router.get("/consent/trusted-contact")
+def trusted_consent_text():
+    return {"version": consent.TRUSTED_VERSION, "sha256": consent.TRUSTED_SHA256, "text": consent.TRUSTED_TEXT}
+
+
+class TrustedIn(BaseModel):
+    name: str = Field(min_length=2, max_length=128)
+    phone: str = Field(pattern=r"^\+?[0-9 ()-]{10,20}$")
+    relation: str | None = Field(None, max_length=32)
+    consent_version: str
+    consent_sha256: str = Field(min_length=64, max_length=64)
+
+
+def trusted_dict(t: TrustedContact) -> dict:
+    return {"id": t.id, "name": t.name, "phone": t.phone, "relation": t.relation, "consent_at": t.consent_at}
+
+
+@router.get("/me/trusted-contacts")
+def my_trusted(user: User = Depends(patient_only), db: Session = Depends(get_db)):
+    p = auth.own_patient(user, db)
+    return [trusted_dict(t) for t in db.scalars(select(TrustedContact).where(TrustedContact.patient_id == p.id, TrustedContact.revoked_at.is_(None)))]
+
+
+@router.post("/me/trusted-contacts")
+def add_trusted(data: TrustedIn, request: Request, user: User = Depends(patient_only), db: Session = Depends(get_db)):
+    """Доверенное лицо — только с отдельного согласия пациента на информирование."""
+    if data.consent_version != consent.TRUSTED_VERSION or data.consent_sha256 != consent.TRUSTED_SHA256:
+        raise HTTPException(409, "Текст согласия изменился — обновите страницу")
+    p = auth.own_patient(user, db)
+    t = TrustedContact(patient_id=p.id, relation=data.relation, consent_version=consent.TRUSTED_VERSION,
+                       consent_text_sha256=consent.TRUSTED_SHA256)
+    db.add(t)
+    t.name, t.phone = data.name.strip(), data.phone.strip()
+    auth.audit(db, user, "trusted_contact_consent_given", "trusted_contact", None, patient_id=p.id, ip=auth.client_ip(request),
+               version=consent.TRUSTED_VERSION)
+    db.commit()
+    return trusted_dict(t)
+
+
+@router.delete("/me/trusted-contacts/{tid}")
+def revoke_trusted(tid: int, request: Request, user: User = Depends(patient_only), db: Session = Depends(get_db)):
+    p = auth.own_patient(user, db)
+    t = db.get(TrustedContact, tid)
+    if not t or t.patient_id != p.id:
+        raise HTTPException(404, "Не найдено")
+    t.revoked_at = now()
+    auth.audit(db, user, "trusted_contact_consent_revoked", "trusted_contact", t.id, patient_id=p.id, ip=auth.client_ip(request))
+    db.commit()
+    return {"ok": True}
 
 
 @router.get("/me/overview")
@@ -70,7 +122,9 @@ def overview(user: User = Depends(patient_only), db: Session = Depends(get_db)):
         "diary_done_today": diary_today is not None,
         "crisis": crisis is not None and any(
             (x if isinstance(x, str) else next(iter(x))) == "crisis_screen" for x in crisis.actions),
-        "crisis_contacts": consent.CRISIS_CONTACTS,
+        "crisis_contacts": consent.CRISIS_CONTACTS + [
+            {"title": f"Доверенное лицо: {t.name}", "phone": t.phone}
+            for t in db.scalars(select(TrustedContact).where(TrustedContact.patient_id == p.id, TrustedContact.revoked_at.is_(None)))],
         "unread_messages": unread,
     }
 

@@ -31,7 +31,7 @@ if IS_SQLITE:
         # а не падает с «database is locked» при попытке повысить чтение до записи.
         conn.exec_driver_sql("BEGIN IMMEDIATE" if conn.get_execution_options().get("write") else "BEGIN")
 else:
-    engine = create_engine(DATABASE_URL, pool_size=20, max_overflow=20, pool_pre_ping=True)
+    engine = create_engine(DATABASE_URL, pool_size=30, max_overflow=30, pool_timeout=30, pool_pre_ping=True)
 
 SessionLocal = sessionmaker(engine, expire_on_commit=False)
 WriteSession = sessionmaker(engine.execution_options(write=True), expire_on_commit=False)
@@ -52,8 +52,8 @@ def defer_write(db: Session, fn) -> None:
         fn(db)
 
 
-def run_deferred(db: Session) -> None:
-    fns = db.info.pop("deferred", [])
+def run_deferred(db: Session | None, fns: list | None = None) -> None:
+    fns = fns if fns is not None else db.info.pop("deferred", [])
     if not fns:
         return
     with WriteSession() as w:
@@ -69,9 +69,6 @@ def get_db(request: Request):
     try:
         yield db
     finally:
-        try:
-            if not write and db.in_transaction():
-                db.rollback()  # читающая транзакция: снять снимок
-            run_deferred(db)  # в т. ч. при ошибке/403: попытка доступа должна попасть в журнал
-        finally:
-            db.close()
+        fns = db.info.pop("deferred", [])
+        db.close()  # сначала вернуть соединение в пул
+        run_deferred(None, fns)  # в т. ч. при ошибке/403: попытка доступа должна попасть в журнал

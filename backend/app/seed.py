@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import json
 import random
 from datetime import date, datetime, timedelta
@@ -24,10 +25,10 @@ from .config import BASE_DIR
 from .crypto import vault
 from .db import Base, WriteSession as SessionLocal, engine
 from .engine import alerts, knowledge, scales
-from .models import AdverseEvent, DiaryEntry, DoseLog, Patient, Prescription, ScaleAssignment, ScaleResult, User, Visit, now
+from .models import AdverseEvent, DiaryEntry, DoseLog, Patient, Prescription, ScaleAssignment, ScaleResult, TrustedContact, User, Visit, now
 from .services import schedule_doses
 
-PASSWORD = "Kompas-demo-2026"
+PASSWORD = os.getenv("DEMO_PASSWORD", "Kompas-demo-2026")  # на публичном стенде задать свой
 rnd = random.Random(42)
 
 
@@ -134,7 +135,7 @@ def run(reset: bool) -> None:
         # 1. ГТР у психиатра: неэффективность 1-й и 2-й линии (КР 457) -> Авиандр по показаниям и по КР,
         #    ответ на терапию, ремиссия по HAM-A к 6-й неделе
         p1 = patient(db, "patient1", psy, "Соколова Мария Андреевна", date(1991, 4, 12), "f",
-                     {"conditions": [], "allergies": [], "egfr": 96, "psychotherapy": "КПТ, 12 сеансов"},
+                     {"height_cm": 165, "weight_kg": 58, "conditions": [], "allergies": [], "egfr": 96, "psychotherapy": "КПТ, 12 сеансов"},
                      [{"icd10": "F41.1", "title": "Генерализованное тревожное расстройство", "primary": True}],
                      history=[{"inn": "эсциталопрам", "dose": "20 мг/сут", "weeks": 6, "outcome": "no_response"},
                               {"inn": "дулоксетин", "dose": "60 мг/сут", "weeks": 3, "outcome": "intolerance"}])
@@ -149,7 +150,7 @@ def run(reset: bool) -> None:
 
         # 2. Тревога после COVID-19 у терапевта: Авиандр по показаниям (курс 4 нед.), направление не требуется
         p2 = patient(db, "patient2", ter, "Кузнецов Дмитрий Павлович", date(1979, 9, 3), "m",
-                     {"conditions": ["cardiovascular"], "allergies": [], "post_covid": True, "egfr": 82},
+                     {"height_cm": 178, "weight_kg": 86, "conditions": ["cardiovascular"], "allergies": [], "post_covid": True, "egfr": 82},
                      [{"icd10": "F43.2", "title": "Расстройство адаптации (после перенесённой COVID-19)", "primary": True},
                       {"icd10": "I10", "title": "Артериальная гипертензия"}],
                      meds=[{"name": "Амлодипин", "inn": "амлодипин", "classes": ["antihypertensive"], "dose": "5 мг 1 р/сут"}], visit_days_ago=16)
@@ -163,7 +164,7 @@ def run(reset: bool) -> None:
 
         # 3. Депрессивный эпизод + тревога у терапевта: Авиандр вне показаний, эсциталопрам показан; направление ЖЕЛАТЕЛЬНО
         p3 = patient(db, "patient3", ter, "Морозова Елена Викторовна", date(1985, 1, 27), "f",
-                     {"conditions": [], "allergies": []},
+                     {"height_cm": 168, "weight_kg": 63, "conditions": [], "allergies": []},
                      [{"icd10": "F32.1", "title": "Депрессивный эпизод средней степени", "primary": True}], visit_days_ago=2)
         p3_user = db.get(User, p3.user_id)
         add_scale(db, kb, p3, "PHQ9", 17, t - timedelta(days=2), p3_user)
@@ -172,7 +173,7 @@ def run(reset: bool) -> None:
 
         # 4. ГТР с противопоказаниями: ХБП (СКФ 48) + трамадол — Авиандр заблокирован, предупреждения безопасности
         p4 = patient(db, "patient4", psy, "Волков Николай Иванович", date(1966, 6, 18), "m",
-                     {"conditions": ["cardiovascular", "diabetes"], "allergies": [], "egfr": 48},
+                     {"height_cm": 174, "weight_kg": 92, "conditions": ["cardiovascular", "diabetes"], "allergies": [], "egfr": 48},
                      [{"icd10": "F41.1", "title": "Генерализованное тревожное расстройство", "primary": True},
                       {"icd10": "N18.3", "title": "Хроническая болезнь почек, стадия 3а"},
                       {"icd10": "E11", "title": "Сахарный диабет 2 типа"}],
@@ -185,10 +186,14 @@ def run(reset: bool) -> None:
 
         # 5. На Авиандре у терапевта — живой сценарий алерта: пациент отправит PHQ-9 с п. 9 > 0
         p5 = patient(db, "patient5", ter, "Лебедев Артём Олегович", date(1996, 11, 5), "m",
-                     {"conditions": [], "allergies": [], "post_covid": True},
+                     {"height_cm": 182, "weight_kg": 74, "conditions": [], "allergies": [], "post_covid": True},
                      [{"icd10": "F43.2", "title": "Расстройство адаптации (после перенесённой COVID-19)", "primary": True}], visit_days_ago=12)
         p5_user = db.get(User, p5.user_id)
         prescribe(db, kb, p5, ter, "aviandr", "post_covid_anxiety", 10, 0.9)
+        tc = TrustedContact(patient_id=p5.id, relation="сестра", consent_version=consent.TRUSTED_VERSION,
+                            consent_text_sha256=consent.TRUSTED_SHA256)
+        db.add(tc)
+        tc.name, tc.phone = "Лебедева Ольга", "+7 900 000-00-55"
         add_scale(db, kb, p5, "GAD7", 11, t - timedelta(days=11), p5_user)
         add_scale(db, kb, p5, "PHQ9", 9, t - timedelta(days=11), p5_user)
         add_scale(db, kb, p5, "GAD7", 10, t - timedelta(days=4), p5_user)
@@ -196,7 +201,7 @@ def run(reset: bool) -> None:
 
         # 6. Нежелательное явление и низкая приверженность: черновик извещения о НР, алерт приверженности
         p6 = patient(db, "patient6", psy, "Новикова Ольга Сергеевна", date(1958, 3, 30), "f",
-                     {"conditions": ["cardiovascular"], "allergies": []},
+                     {"height_cm": 160, "weight_kg": 71, "conditions": ["cardiovascular"], "allergies": []},
                      [{"icd10": "F41.1", "title": "Генерализованное тревожное расстройство", "primary": True}],
                      meds=[{"name": "Бисопролол", "inn": "бисопролол", "dose": "5 мг 1 р/сут"}], visit_days_ago=22,
                      history=[{"inn": "сертралин", "dose": "100 мг/сут", "weeks": 8, "outcome": "partial"},

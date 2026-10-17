@@ -74,6 +74,8 @@ class User(Base):
     frmr_id: Mapped[str | None] = mapped_column(String(32))  # Федеральный регистр медработников (193н п. 9)
     is_duty: Mapped[bool] = mapped_column(Boolean, default=False)  # дежурный врач: экстренное реагирование (193н п. 44)
     is_reviewer: Mapped[bool] = mapped_column(Boolean, default=False)  # клинический рецензент изменений справочников
+    # Рабочие часы для экстренных уведомлений: {"days": [1..7], "start": "09:00", "end": "18:00"}; None — по политике клиники
+    working_hours: Mapped[dict | None] = mapped_column(JSON)
     totp_secret_enc: Mapped[str | None] = mapped_column(Text)  # 2FA, зашифрован ключом приложения
     phone_enc: Mapped[str | None] = mapped_column(Text)  # для экстренных SMS, зашифрован ключом приложения
     failed_logins: Mapped[int] = mapped_column(Integer, default=0)
@@ -311,6 +313,7 @@ class Alert(Base):
     acknowledged_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     resolution_enc: Mapped[str | None] = mapped_column(Text)
     resolution = Sealed("resolution_enc")
+    notified: Mapped[list] = mapped_column(JSON, default=list)  # маршрут экстренного оповещения
 
 
 class ClinicalAction(Base):
@@ -448,9 +451,11 @@ class Notification(Base):
     отправки и доставки — 193н п. 46 «д». Текст без медицинских сведений (3185-1 ст. 9)."""
     __tablename__ = "notifications"
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    trusted_contact_id: Mapped[int | None] = mapped_column(ForeignKey("trusted_contacts.id"))
     alert_id: Mapped[int | None] = mapped_column(ForeignKey("alerts.id"), index=True)
     channel: Mapped[str] = mapped_column(String(16))  # sms | call
+    reason: Mapped[str | None] = mapped_column(String(64))  # attending | duty | escalation | trusted_contact
     text: Mapped[str] = mapped_column(String(320))
     status: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending | sent | failed
     attempts: Mapped[int] = mapped_column(Integer, default=0)
@@ -459,3 +464,21 @@ class Notification(Base):
     last_error: Mapped[str | None] = mapped_column(String(256))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class TrustedContact(Base):
+    """Доверенное лицо пациента, которому при экстренной ситуации можно сообщить, что пациенту
+    нужна поддержка. Только с отдельного письменного согласия пациента (323-ФЗ ст. 13 ч. 3,
+    ст. 22 ч. 3; 152-ФЗ ст. 9). Сообщение не содержит диагноза и медицинских сведений."""
+    __tablename__ = "trusted_contacts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"), index=True)
+    name_enc: Mapped[str | None] = mapped_column(Text)
+    name = Sealed("name_enc")
+    phone_enc: Mapped[str | None] = mapped_column(Text)
+    phone = Sealed("phone_enc")
+    relation: Mapped[str | None] = mapped_column(String(32))
+    consent_version: Mapped[str] = mapped_column(String(16))
+    consent_text_sha256: Mapped[str] = mapped_column(String(64))
+    consent_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime)

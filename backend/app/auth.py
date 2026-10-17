@@ -105,7 +105,11 @@ def _session_user(token: str | None, db: Session) -> tuple[User, AuthSession]:
 
 
 def current_user(cred: HTTPAuthorizationCredentials | None = Depends(_bearer), db: Session = Depends(get_db)) -> User:
-    return _session_user(cred.credentials if cred else None, db)[0]
+    user = _session_user(cred.credentials if cred else None, db)[0]
+    # Вернуть соединение в пул, пока запрос ждёт рабочий поток для обработчика
+    # (иначе под нагрузкой пул исчерпывается). Объект пользователя остаётся загруженным.
+    db.close()
+    return user
 
 
 def current_session(cred: HTTPAuthorizationCredentials | None = Depends(_bearer), db: Session = Depends(get_db)) -> AuthSession:

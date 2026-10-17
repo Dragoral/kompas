@@ -10,10 +10,20 @@ from app.models import AuditLog
 
 
 def _raw_db_bytes() -> bytes:
-    path = engine.url.database
-    with sqlite3.connect(path) as c:
+    """Всё, что физически лежит в БД: файл SQLite или содержимое всех таблиц PostgreSQL."""
+    if engine.url.get_backend_name() == "sqlite":
+        path = engine.url.database
+        c = sqlite3.connect(path)
         c.execute("PRAGMA wal_checkpoint(FULL)")
-    return open(path, "rb").read()
+        c.close()
+        return open(path, "rb").read()
+    from sqlalchemy import text
+    from app.db import Base
+    chunks = []
+    with engine.connect() as conn:
+        for t in Base.metadata.sorted_tables:
+            chunks += [r[0] for r in conn.execute(text(f"SELECT row_to_json(x)::text FROM {t.name} x"))]
+    return " | ".join(chunks).encode()
 
 
 def test_identifiers_and_free_text_encrypted_at_rest(client, tokens):

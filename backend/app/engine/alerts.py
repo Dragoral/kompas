@@ -79,8 +79,10 @@ def process(db: Session, patient: Patient, trigger_ref: str, received_at: dateti
         bus.enqueue(db, doctor_channel(alert.doctor_id), "alert", alert_event(alert))
         if any(_action_name(a) == "crisis_screen" for a in alert.actions):
             bus.enqueue(db, patient_channel(patient.id), "crisis", {"alert_id": alert.id})
-        if alert.severity == "critical":  # экстренное оповещение вне кабинета (SMS)
-            notify.enqueue_for_alert(db, alert, patient, alert.doctor_id)
+        if alert.severity == "critical":  # экстренное оповещение по политике клиники
+            alert.notified = notify.route_critical(db, kb, alert, patient)
+            if alert.escalated_to:  # вне рабочего времени — сразу дежурному
+                bus.enqueue(db, doctor_channel(alert.escalated_to), "alert", {**alert_event(alert), "escalated": True})
     return created
 
 
@@ -156,4 +158,5 @@ def alert_dict(a: Alert, patient: Patient | None = None) -> dict:
         "actions": [_action_name(x) for x in a.actions], "status": a.status,
         "created_at": a.created_at, "data_received_at": a.data_received_at, "pushed_at": a.pushed_at,
         "delivered_at": a.delivered_at, "acknowledged_at": a.acknowledged_at, "escalated_to": a.escalated_to,
+        "notified": a.notified or [],
     }

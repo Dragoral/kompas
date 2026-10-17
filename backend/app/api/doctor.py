@@ -15,7 +15,7 @@ from ..crypto import vault
 from ..db import defer_write, get_db
 from ..engine import alerts, context, extract, fhir, knowledge, recommend
 from ..models import (AdverseEvent, Alert, ClinicalAction, Document, Message, Patient, Prescription, ScaleAssignment,
-                      ScaleResult, User, Visit, now)
+                      ScaleResult, TrustedContact, User, Visit, now)
 from .patient import _last_id, history_for, sse
 
 router = APIRouter(prefix="/api/doctor", tags=["doctor"])
@@ -177,7 +177,24 @@ def card(pid: int, request: Request, user: User = Depends(doctor_only), db: Sess
     kb = knowledge.get(db)
     ctx = context.build(db, p)
     rxs = db.scalars(select(Prescription).where(Prescription.patient_id == p.id).order_by(Prescription.started_at.desc())).all()
+    prof = p.profile or {}
+    bmi = None
+    if prof.get("height_cm") and prof.get("weight_kg"):
+        bmi = round(prof["weight_kg"] / (prof["height_cm"] / 100) ** 2, 1)
+    active_rx = next((r for r in rxs if r.status == "active"), None)
     res = {
+        # шапка карточки (по запросу врачей): ФИО, возраст, ИМТ, препараты, диагноз, аллергии
+        "header": {
+            "full_name": p.full_name, "age": ctx["patient"]["age"], "sex": p.sex,
+            "bmi": bmi, "height_cm": prof.get("height_cm"), "weight_kg": prof.get("weight_kg"),
+            "diagnoses": p.diagnoses,
+            "medications": ([{"name": kb["drug"].get(active_rx.drug_id, {}).get("trade_name", active_rx.drug_id),
+                              "regimen": active_rx.regimen, "prescribed_here": True}] if active_rx else [])
+                           + [{"name": m.get("name") or m.get("inn"), "dose": m.get("dose"), "prescribed_here": False} for m in p.current_meds],
+            "allergies": prof.get("allergies", []),
+        },
+        "trusted_contacts": [{"name": t.name, "phone": t.phone, "relation": t.relation, "consent_at": t.consent_at}
+                             for t in db.scalars(select(TrustedContact).where(TrustedContact.patient_id == p.id, TrustedContact.revoked_at.is_(None)))],
         "patient": {
             "id": p.id, "code": p.code, "full_name": p.full_name, "birth_date": p.birth_date, "age": ctx["patient"]["age"],
             "sex": p.sex, "contacts": json.loads(p.contacts or "{}"), "profile": p.profile, "diagnoses": p.diagnoses,
