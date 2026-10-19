@@ -64,3 +64,19 @@ def test_anonymized_analytics_suppresses_small_groups(client, tokens):
         assert name not in text  # ни ФИО, ни псевдонимов
     assert all(v == "< 5" or (isinstance(v, int) and v >= 5) for v in r["patients_by_diagnosis"].values())
     assert client.get("/api/analytics/summary", headers=tokens["admin"], params={"k": 2}).status_code == 422
+
+
+def test_admin_patient_list_has_no_medical_data(client, tokens):
+    rows = client.get("/api/admin/patients", headers=tokens["admin"]).json()
+    assert rows and set(rows[0]) == {"id", "code", "doctor_id", "doctor_name", "monitoring_active"}
+    assert client.get("/api/admin/patients", headers=tokens["psychiatrist"]).status_code == 403
+
+
+def test_doctor_working_hours_validated_and_saved(client, tokens):
+    adm = tokens["admin"]
+    uid = next(u["id"] for u in client.get("/api/admin/users", headers=adm).json() if u["login"] == "therapist")
+    bad = client.patch(f"/api/admin/users/{uid}", headers=adm, json={"working_hours": {"days": [1], "start": "18:00", "end": "09:00"}})
+    assert bad.status_code == 422
+    ok = client.patch(f"/api/admin/users/{uid}", headers=adm, json={"working_hours": {"days": [5, 1, 1], "start": "08:00", "end": "16:00"}})
+    assert ok.json()["working_hours"] == {"days": [1, 5], "start": "08:00", "end": "16:00"}
+    assert client.patch(f"/api/admin/users/{uid}", headers=adm, json={"working_hours": None}).json()["working_hours"] is None

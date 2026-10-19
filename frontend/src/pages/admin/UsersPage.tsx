@@ -6,6 +6,7 @@ import { useAuth } from '../../auth/AuthContext'
 import { ErrorMessage } from '../../components/ErrorMessage'
 import { Loader } from '../../components/Loader'
 import { formatDateTime, ROLE_LABEL, SPECIALTY_LABEL } from '../../format'
+import { WEEKDAYS, WorkingHoursEditor, type WorkingHours } from '../knowledge/ResponsePolicyPage'
 
 const SPECIALTIES = ['psychiatrist', 'psychotherapist', 'therapist', 'neurologist', 'gp', 'other']
 
@@ -13,6 +14,7 @@ export function UsersPage() {
   const { user: me } = useAuth()
   const state = useApi<StaffUser[]>('/api/admin/users')
   const [secret, setSecret] = useState<{ login: string; password: string } | null>(null)
+  const [hoursFor, setHoursFor] = useState<StaffUser | null>(null)
   const patch = useAction((id: number, body: Partial<StaffUser>) => api.patch(`/api/admin/users/${id}`, body))
   const reset = useAction((id: number) => api.post<{ temporary_password: string }>(`/api/admin/users/${id}/reset-password`))
 
@@ -42,6 +44,7 @@ export function UsersPage() {
                   <th scope="col">Роль</th>
                   <th scope="col">Рецензент</th>
                   <th scope="col">Дежурный</th>
+                  <th scope="col">SMS-уведомления</th>
                   <th scope="col">Второй фактор</th>
                   <th scope="col">Статус</th>
                   <th scope="col"><span className="visually-hidden">Действия</span></th>
@@ -65,6 +68,14 @@ export function UsersPage() {
                                onChange={(e) => onPatch(u.id, { is_duty: e.target.checked })} />
                       )}
                     </td>
+                    <td>
+                      {u.role === 'doctor' && (
+                        <>
+                          {u.working_hours ? formatHours(u.working_hours) : 'по политике клиники'}{' '}
+                          <button type="button" className="button-link" onClick={() => setHoursFor(u)}>изменить</button>
+                        </>
+                      )}
+                    </td>
                     <td>{u.mfa_enabled ? 'Да' : 'Нет'}</td>
                     <td>{!u.active ? 'Заблокирован' : u.locked_until ? `Вход заблокирован до ${formatDateTime(u.locked_until)}` : 'Активен'}</td>
                     <td className="nowrap">
@@ -84,6 +95,9 @@ export function UsersPage() {
           </div>
         )}
       </Loader>
+      {hoursFor && (
+        <HoursForm user={hoursFor} onClose={() => setHoursFor(null)} onSaved={() => { setHoursFor(null); state.reload() }} />
+      )}
       <NewUserForm onCreated={(login, password) => { setSecret({ login, password }); state.reload() }} />
     </>
   )
@@ -170,6 +184,30 @@ function NewUserForm({ onCreated }: { onCreated: (login: string, password: strin
       )}
       <ErrorMessage error={create.error} />
       <button type="submit" disabled={create.pending}>Создать</button>
+    </form>
+  )
+}
+
+function formatHours(h: WorkingHours): string {
+  return `${h.days.map((d) => WEEKDAYS[d - 1]).join(', ')} ${h.start}–${h.end}`
+}
+
+function HoursForm({ user, onClose, onSaved }: { user: StaffUser; onClose: () => void; onSaved: () => void }) {
+  const [hours, setHours] = useState<WorkingHours>(user.working_hours ?? { days: [1, 2, 3, 4, 5], start: '09:00', end: '18:00' })
+  const save = useAction((value: WorkingHours | null) => api.patch(`/api/admin/users/${user.id}`, { working_hours: value }))
+
+  return (
+    <form className="form panel" aria-labelledby="hours-h" onSubmit={async (e) => { e.preventDefault(); if (await save.run(hours)) onSaved() }}>
+      <h2 id="hours-h">Когда отправлять SMS: {user.full_name}</h2>
+      <p className="muted">Вне этого времени срочные оповещения получает дежурный врач. В кабинете оповещения видны всегда.</p>
+      <WorkingHoursEditor value={hours} onChange={setHours} />
+      <ErrorMessage error={save.error} />
+      <div className="row">
+        <button type="submit" disabled={save.pending}>Сохранить</button>
+        <button type="button" className="secondary" disabled={save.pending}
+                onClick={async () => { if (await save.run(null)) onSaved() }}>Как в политике клиники</button>
+        <button type="button" className="secondary" onClick={onClose}>Отмена</button>
+      </div>
     </form>
   )
 }

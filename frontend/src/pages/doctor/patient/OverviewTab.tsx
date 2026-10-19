@@ -16,6 +16,7 @@ export function OverviewTab() {
 
   return (
     <>
+      <Summary id={id} />
       <section aria-labelledby="alerts-h">
         <h2 id="alerts-h">Оповещения</h2>
         {openAlerts.length === 0 ? <p>Открытых оповещений нет.</p> : openAlerts.map((a) => (
@@ -162,5 +163,35 @@ function PvReport({ actionId }: { actionId: number }) {
         <dt>Основание</dt><dd>{data.legal_basis}</dd>
       </dl>
     </div>
+  )
+}
+
+function Summary({ id }: { id: string }) {
+  const summary = useAction(() => api.get<{ text: string; generated: string }>(`/api/doctor/patients/${id}/summary`))
+  const fhir = useAction(() => api.get<unknown>(`/api/doctor/patients/${id}/fhir`))
+  const [text, setText] = useState<string | null>(null)
+
+  const onFhir = async () => {
+    const data = await fhir.run()
+    if (!data) return
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/fhir+json' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `patient-${id}-fhir.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  return (
+    <section aria-labelledby="summary-h">
+      <h2 id="summary-h">Сводка к визиту</h2>
+      {text !== null && <pre className="plain-text">{text || 'Недостаточно данных наблюдения.'}</pre>}
+      <ErrorMessage error={summary.error ?? fhir.error} />
+      <div className="row">
+        <button type="button" className="secondary" disabled={summary.pending}
+                onClick={async () => { const r = await summary.run(); if (r) setText(r.text) }}>Сформировать сводку</button>
+        <button type="button" className="secondary" disabled={fhir.pending} onClick={onFhir}>Выгрузить в HL7 FHIR</button>
+      </div>
+    </section>
   )
 }

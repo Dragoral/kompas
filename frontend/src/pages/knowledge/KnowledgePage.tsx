@@ -13,6 +13,16 @@ export const KIND_LABEL: Record<string, string> = {
   dictionary: 'Словарь',
 }
 
+/** Отдельная форма для типа справочника; остальное редактируется как JSON. */
+export function editorPath(kind: string, code: string): string | null {
+  const c = encodeURIComponent(code)
+  if (kind === 'scale') return `/knowledge/scales/${c}`
+  if (kind === 'drug') return `/knowledge/drugs/${c}`
+  if (kind === 'rules') return `/knowledge/rules/${c}`
+  if (kind === 'dictionary' && code === 'response_policy') return '/knowledge/response-policy'
+  return null
+}
+
 export function KnowledgePage() {
   const { user } = useAuth()
   const state = useApi<KnowledgeRow[]>('/api/knowledge')
@@ -26,6 +36,7 @@ export function KnowledgePage() {
       <ul className="actions">
         <li><Link to="/knowledge/scales/new">Создать шкалу</Link></li>
         <li><Link to="/knowledge/import">Импортировать шкалу (CSV, FHIR)</Link></li>
+        <li><Link to="/knowledge/drugs/new">Добавить препарат</Link></li>
         {user?.role === 'doctor' && <li><Link to="/knowledge/review">Изменения на рассмотрении</Link></li>}
       </ul>
       <Loader state={state}>
@@ -56,9 +67,10 @@ export function KnowledgePage() {
                     <td>{formatDate(r.updated_at)}</td>
                     <td>{r.verified === null || r.verified === undefined ? '—' : r.verified ? 'Да' : 'Нет'}</td>
                     <td className="nowrap">
-                      {r.kind === 'scale' && <Link to={`/knowledge/scales/${encodeURIComponent(r.code)}`}>Изменить</Link>}
+                      {editorPath(r.kind, r.code) && <><Link to={editorPath(r.kind, r.code)!}>Изменить</Link> · </>}
+                      <Link to={`/knowledge/${r.kind}/${encodeURIComponent(r.code)}/json`}>JSON</Link>
                       {user?.role === 'admin' && (
-                        <> {r.kind === 'scale' && '· '}<Link to={`/knowledge/${r.kind}/${encodeURIComponent(r.code)}/versions`}>Версии</Link></>
+                        <> · <Link to={`/knowledge/${r.kind}/${encodeURIComponent(r.code)}/versions`}>Версии</Link></>
                       )}
                     </td>
                   </tr>

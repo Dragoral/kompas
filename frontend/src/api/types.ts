@@ -30,6 +30,7 @@ export interface Regimen {
 export interface Diagnosis {
   icd10: string
   title?: string
+  primary?: boolean
 }
 
 export interface ScaleSummary {
@@ -108,7 +109,14 @@ export interface PatientCard {
     code: string
     monitoring_active: boolean
     in_person_visit_at: string | null
+    profile: Record<string, unknown> & { height_cm?: number; weight_kg?: number; allergies?: string[]; conditions?: string[] }
+    diagnoses: Diagnosis[]
+    current_meds: { name?: string; inn?: string | null; dose?: string | null }[]
+    therapy_history: { inn: string; dose?: string | null; weeks?: number | null; outcome?: string }[]
+    thresholds: Record<string, number>
+    threshold_overrides: Record<string, number> | null
   }
+  documents: { id: number; filename: string; extractor: string; applied: boolean; created_at: string }[]
   context: {
     scales: Record<string, ScaleSummary & { days_ago: number | null; count: number }>
     adherence: { pct_14d: number | null; missed_streak: number }
@@ -256,6 +264,7 @@ export interface StaffUser {
   active: boolean
   mfa_enabled: boolean
   locked_until: string | null
+  working_hours: { days: number[]; start: string; end: string } | null
 }
 
 export interface SystemStatus {

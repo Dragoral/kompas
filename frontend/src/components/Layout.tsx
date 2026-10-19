@@ -15,11 +15,13 @@ const NAV: Record<Role, { to: string; label: string }[]> = {
     { to: '/me/diary', label: 'Дневник' },
     { to: '/me/history', label: 'Моя история' },
     { to: '/me/messages', label: 'Сообщения' },
+    { to: '/me/trusted-contacts', label: 'Доверенное лицо' },
     { to: '/me/data', label: 'Мои данные' },
   ],
   admin: [
     { to: '/admin/system', label: 'Состояние системы' },
     { to: '/admin/users', label: 'Пользователи' },
+    { to: '/admin/patients', label: 'Пациенты' },
     { to: '/admin/audit', label: 'Журнал аудита' },
     { to: '/knowledge', label: 'Справочники' },
   ],
@@ -53,6 +55,7 @@ export function Layout() {
           </nav>
           <div className="user-box">
             {user.role !== 'patient' && <span>{user.full_name} <span className="muted">({ROLE_LABEL[user.role]})</span></span>}
+            <NavLink to="/account">Учётная запись</NavLink>
             <button type="button" className="button-link" onClick={onLogout}>Выйти</button>
           </div>
         </div>

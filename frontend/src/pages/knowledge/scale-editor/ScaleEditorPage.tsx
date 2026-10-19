@@ -6,6 +6,7 @@ import { useAction, useApi } from '../../../api/useApi'
 import { ErrorMessage } from '../../../components/ErrorMessage'
 import { Loader } from '../../../components/Loader'
 import { ScaleQuestions, type Answers } from '../../../components/ScaleQuestions'
+import { CheckResult } from '../ProposeBar'
 import { BandsEditor } from './BandsEditor'
 import { ItemsEditor } from './ItemsEditor'
 import { emptyScale, pathLabel, toBody, type ScaleBody } from './model'
@@ -165,7 +166,7 @@ function ScaleEditor({ initial, todo, isNew = false, version }: {
           <h2 id="check-h">Проверка</h2>
           <p><button type="button" className="secondary" disabled={validate.pending} onClick={onValidate}>Проверить шкалу</button></p>
           <ErrorMessage error={validate.error} />
-          {check && <CheckResult result={check} />}
+          {check && <CheckResult result={check} pathLabel={pathLabel} />}
           <Preview scale={scale} />
         </section>
 
@@ -186,23 +187,6 @@ function ScaleEditor({ initial, todo, isNew = false, version }: {
         </section>
       </form>
     </>
-  )
-}
-
-export function CheckResult({ result }: { result: ValidationResult }) {
-  return (
-    <div className={result.valid ? 'message' : 'message message-error'} role="status">
-      <p>{result.valid ? 'Ошибок не найдено.' : 'Исправьте ошибки:'}</p>
-      {result.errors.length > 0 && (
-        <ul>{result.errors.map((e, i) => <li key={i}><strong>{pathLabel(e.path)}:</strong> {e.message}</li>)}</ul>
-      )}
-      {result.warnings.length > 0 && (
-        <>
-          <p>Предупреждения:</p>
-          <ul>{result.warnings.map((w, i) => <li key={i}><strong>{pathLabel(w.path)}:</strong> {w.message}</li>)}</ul>
-        </>
-      )}
-    </div>
   )
 }
 

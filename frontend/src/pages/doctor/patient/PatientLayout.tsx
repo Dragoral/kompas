@@ -20,6 +20,7 @@ const TABS = [
   { to: 'scales', label: 'Шкалы' },
   { to: 'history', label: 'Динамика' },
   { to: 'messages', label: 'Сообщения' },
+  { to: 'data', label: 'Данные' },
 ]
 
 export function PatientLayout() {

@@ -471,3 +471,44 @@ table.compact td { padding: 0.25rem 0.4rem; vertical-align: middle; }
 .chat-mine { align-self: flex-end; background: var(--info-bg); }
 .chat-theirs { align-self: flex-start; background: var(--bg-alt); }
 .chat-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+pre.plain-text {
+  font-family: var(--font);
+  font-size: 1rem;
+  white-space: pre-wrap;
+}
+
+input.short { width: 6rem; }
+
+.nested { margin: 0 0 0.5rem 1.75rem; }
+
+/* Конструктор условий */
+.condition { display: flex; flex-direction: column; gap: 0.75rem; }
+
+.clause {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem 0.75rem;
+  padding: 0.5rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+.clause > label,
+.clause-value > label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.clause > label:first-child { flex: 2 1 260px; }
+.clause-part { flex: 0 1 130px; }
+.clause-op { flex: 0 1 170px; }
+.clause-value { display: flex; flex: 1 1 200px; flex-wrap: wrap; gap: 0.5rem; }
+.clause-value > label { flex: 1 1 120px; }
+
+/* Объяснение проверки правила */
+ul.explain { margin: 0.25rem 0; padding-left: 1.25rem; }
+
+.user-box a { white-space: nowrap; }

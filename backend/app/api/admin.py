@@ -13,7 +13,7 @@ from __future__ import annotations
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -151,7 +151,7 @@ def user_dict(u: User) -> dict:
     return {"id": u.id, "login": u.login, "role": u.role, "full_name": u.full_name, "specialty": u.specialty,
             "frmr_id": u.frmr_id, "is_duty": u.is_duty, "is_reviewer": u.is_reviewer, "active": u.active,
             "mfa_enabled": bool(u.totp_secret_enc), "has_phone": bool(u.phone_enc), "locked_until": u.locked_until,
-            "created_at": u.created_at}
+            "working_hours": u.working_hours, "created_at": u.created_at}
 
 
 @router.get("/users")
@@ -190,6 +190,26 @@ def create_user(data: StaffIn, request: Request, user: User = Depends(admin_only
     return {**user_dict(u), "temporary_password": password}
 
 
+class WorkingHours(BaseModel):
+    """Часы, когда врачу можно отправлять внешние уведомления (SMS); пусто — по политике клиники."""
+    days: list[int] = Field(min_length=1, max_length=7)
+    start: str = Field(pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
+    end: str = Field(pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
+
+    @field_validator("days")
+    @classmethod
+    def _days(cls, v: list[int]) -> list[int]:
+        if any(d < 1 or d > 7 for d in v):
+            raise ValueError("дни недели — от 1 (пн) до 7 (вс)")
+        return sorted(set(v))
+
+    @model_validator(mode="after")
+    def _order(self):
+        if self.start >= self.end:
+            raise ValueError("начало рабочего времени должно быть раньше окончания")
+        return self
+
+
 class StaffPatch(BaseModel):
     full_name: str | None = Field(None, min_length=3, max_length=128)
     specialty: str | None = Field(None, pattern="^(psychiatrist|psychotherapist|therapist|neurologist|gp|other)$")
@@ -198,6 +218,7 @@ class StaffPatch(BaseModel):
     is_reviewer: bool | None = None
     active: bool | None = None
     phone: str | None = Field(None, pattern=r"^\+?[0-9 ()-]{10,20}$")
+    working_hours: WorkingHours | None = None
 
 
 @router.patch("/users/{uid}")
@@ -208,7 +229,7 @@ def update_user(uid: int, data: StaffPatch, request: Request, user: User = Depen
     if u.id == user.id and data.active is False:
         raise HTTPException(409, "Нельзя заблокировать собственную учётную запись")
     changed = data.model_dump(exclude_unset=True)
-    for k, v in changed.items():
+    for k, v in changed.items():  # working_hours: None — сброс к политике клиники
         setattr(u, k, v)
     if data.active is False:
         auth.revoke_all(db, u.id)  # блокировка — немедленный выход на всех устройствах
@@ -228,6 +249,16 @@ def reset_password(uid: int, request: Request, user: User = Depends(admin_only),
     auth.audit(db, user, "password_reset", "user", u.id, ip=auth.client_ip(request))
     db.commit()
     return {"temporary_password": password}
+
+
+@router.get("/patients")
+def list_patients(user: User = Depends(admin_only), db: Session = Depends(get_db)):
+    """Пациенты для администрирования (смена лечащего врача): только код и врач — без ФИО
+    и медицинских данных (минимизация доступа администратора, 152-ФЗ ст. 5 ч. 5)."""
+    doctors = {u.id: u.full_name for u in db.scalars(select(User).where(User.role == "doctor"))}
+    rows = db.scalars(select(Patient).where(Patient.erased_at.is_(None)).order_by(Patient.code)).all()
+    return [{"id": p.id, "code": p.code, "doctor_id": p.doctor_id, "doctor_name": doctors.get(p.doctor_id),
+             "monitoring_active": p.monitoring_active} for p in rows]
 
 
 class ReassignIn(BaseModel):
