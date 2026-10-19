@@ -1,4 +1,4 @@
-# Развёртывание: PostgreSQL + API. Секреты — в файле .env рядом (не в git):
+# Развёртывание: PostgreSQL + API + веб-интерфейс (nginx). Секреты — в файле .env рядом (не в git):
 #   POSTGRES_PASSWORD=...   MASTER_KEYS=k1:<base64 32 байта>   DEMO_PASSWORD=...
 # Ключ: python -c "import os,base64;print('k1:'+base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip('='))"
 name: kompas
@@ -37,6 +37,14 @@ services:
       - "${API_PORT:-8000}:8000"
     volumes:
       - apidata:/app/data
+
+  web:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "${WEB_PORT:-8081}:80"
 
 volumes:
   pgdata:
