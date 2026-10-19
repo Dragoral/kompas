@@ -5,7 +5,7 @@ import { useApi } from '../../api/useApi'
 import { Loader } from '../../components/Loader'
 import { formatDate } from '../../format'
 
-const KIND_LABEL: Record<string, string> = {
+export const KIND_LABEL: Record<string, string> = {
   scale: 'Шкала',
   drug: 'Препарат',
   rules: 'Правила',
@@ -21,9 +21,13 @@ export function KnowledgePage() {
     <>
       <h1>Справочники</h1>
       <p>
-        <Link to="/knowledge/import">Добавить шкалу</Link>
-        {user?.role === 'doctor' && <> · <Link to="/knowledge/review">Изменения на рассмотрении</Link></>}
+        Изменения справочников вступают в силу после одобрения врачом-рецензентом. Автор изменения не может одобрить его сам.
       </p>
+      <ul className="actions">
+        <li><Link to="/knowledge/scales/new">Создать шкалу</Link></li>
+        <li><Link to="/knowledge/import">Импортировать шкалу (CSV, FHIR)</Link></li>
+        {user?.role === 'doctor' && <li><Link to="/knowledge/review">Изменения на рассмотрении</Link></li>}
+      </ul>
       <Loader state={state}>
         {(rows) => (
           <div className="table-wrap">
@@ -35,8 +39,8 @@ export function KnowledgePage() {
                   <th scope="col">Название</th>
                   <th scope="col">Версия</th>
                   <th scope="col">Обновлено</th>
-                  <th scope="col">Проверено врачами</th>
-                  <th scope="col">Черновик</th>
+                  <th scope="col">Сверено</th>
+                  <th scope="col"><span className="visually-hidden">Действия</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -44,11 +48,19 @@ export function KnowledgePage() {
                   <tr key={`${r.kind}/${r.code}`}>
                     <td>{KIND_LABEL[r.kind] ?? r.kind}</td>
                     <td><code>{r.code}</code></td>
-                    <td>{r.title}</td>
+                    <td>
+                      {r.title}
+                      {r.has_draft && <div className="small"><span className="badge badge-high">Есть изменение на рассмотрении</span></div>}
+                    </td>
                     <td>{r.version}</td>
                     <td>{formatDate(r.updated_at)}</td>
-                    <td>{r.verified === null ? '—' : r.verified ? 'Да' : 'Нет'}</td>
-                    <td>{r.has_draft ? 'Есть' : ''}</td>
+                    <td>{r.verified === null || r.verified === undefined ? '—' : r.verified ? 'Да' : 'Нет'}</td>
+                    <td className="nowrap">
+                      {r.kind === 'scale' && <Link to={`/knowledge/scales/${encodeURIComponent(r.code)}`}>Изменить</Link>}
+                      {user?.role === 'admin' && (
+                        <> {r.kind === 'scale' && '· '}<Link to={`/knowledge/${r.kind}/${encodeURIComponent(r.code)}/versions`}>Версии</Link></>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

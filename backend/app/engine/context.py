@@ -73,6 +73,7 @@ def build(db: Session, patient: Patient, at: datetime | None = None) -> dict:
     by_code: dict[str, list[ScaleResult]] = {}
     for r in rows:
         by_code.setdefault(r.scale_code, []).append(r)
+    observed: dict[str, datetime] = {}
     for code, rs in by_code.items():
         last, prev, first = rs[-1], (rs[-2] if len(rs) > 1 else None), rs[0]
         base = first
@@ -93,6 +94,7 @@ def build(db: Session, patient: Patient, at: datetime | None = None) -> dict:
             "days_ago": (at - last.created_at).days,
             "count": len(rs),
         }
+        observed[f"scales.{code}"] = last.created_at
     ctx["scales"] = scales
 
     # Дневник
@@ -156,12 +158,18 @@ def build(db: Session, patient: Patient, at: datetime | None = None) -> dict:
 
     # Тексты пациента за 3 дня — скрининг высказываний
     recent = at - timedelta(days=3)
-    texts = [d.note for d in diary if d.note and d.day >= recent.date()]
-    texts += [m.text for m in db.scalars(
+    texts = [(d.created_at, d.note) for d in diary if d.note and d.day >= recent.date()]
+    texts += [(m.created_at, m.text) for m in db.scalars(
         select(Message).where(Message.patient_id == patient.id, Message.sender_role == "patient", Message.created_at >= recent)
     )]
-    quote = next((m.group(0) for t in texts if (m := SELF_HARM.search(t))), None)
+    hits = sorted(((t, m.group(0)) for t, text in texts if (m := SELF_HARM.search(text))), key=lambda h: h[0])
+    quote = hits[-1][1] if hits else None
     ctx["flags"] = {"self_harm_text": quote is not None, "self_harm_quote": quote}
+    if hits:
+        observed["flags.self_harm_text"] = hits[-1][0]
+    # Время появления данных, на которые опираются правила: повторный критический
+    # алерт создаётся только на новые данные, а не на каждое событие пациента
+    ctx["_observed_at"] = observed
     return ctx
 
 

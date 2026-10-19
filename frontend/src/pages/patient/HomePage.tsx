@@ -37,6 +37,7 @@ export function HomePage() {
                   <li key={s.code}><Link to={`/me/scales/${s.code}`}>Пройти опросник: {s.title}</Link></li>
                 ))}
                 {o.diary_done_today && o.due_scales.length === 0 && <li>Все задания выполнены.</li>}
+                {o.unread_messages > 0 && <li><Link to="/me/messages">Новые сообщения от врача: {o.unread_messages}</Link></li>}
               </ul>
             </section>
 
@@ -44,6 +45,7 @@ export function HomePage() {
               <section aria-labelledby="therapy-h">
                 <h2 id="therapy-h">Терапия</h2>
                 <p>{o.therapy.trade_name}{o.therapy.regimen ? `, ${formatRegimen(o.therapy.regimen)}` : ''}</p>
+                <p><Link to="/me/adverse-event">Сообщить о нежелательной реакции</Link></p>
                 <ErrorMessage error={dose.error} />
                 {o.doses_today.length > 0 && (
                   <table>

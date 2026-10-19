@@ -2,18 +2,32 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { useAuth } from './auth/AuthContext'
 import { Layout } from './components/Layout'
 import { homePath, RequireRole } from './components/RequireRole'
+import { AuditPage } from './pages/admin/AuditPage'
 import { SystemPage } from './pages/admin/SystemPage'
 import { UsersPage } from './pages/admin/UsersPage'
 import { AlertsPage } from './pages/doctor/AlertsPage'
-import { PatientPage } from './pages/doctor/PatientPage'
+import { NewPatientPage } from './pages/doctor/NewPatientPage'
+import { ClinicianScalePage } from './pages/doctor/patient/ClinicianScalePage'
+import { HistoryTab } from './pages/doctor/patient/HistoryTab'
+import { MessagesTab } from './pages/doctor/patient/MessagesTab'
+import { OverviewTab } from './pages/doctor/patient/OverviewTab'
+import { PatientLayout } from './pages/doctor/patient/PatientLayout'
+import { ScalesTab } from './pages/doctor/patient/ScalesTab'
+import { TherapyTab } from './pages/doctor/patient/TherapyTab'
 import { PatientsPage } from './pages/doctor/PatientsPage'
 import { ImportScalePage } from './pages/knowledge/ImportScalePage'
 import { KnowledgePage } from './pages/knowledge/KnowledgePage'
 import { ReviewPage } from './pages/knowledge/ReviewPage'
+import { ScaleEditorPage } from './pages/knowledge/scale-editor/ScaleEditorPage'
+import { VersionsPage } from './pages/knowledge/VersionsPage'
 import { LoginPage } from './pages/LoginPage'
 import { NotFoundPage } from './pages/NotFoundPage'
+import { AdverseEventPage } from './pages/patient/AdverseEventPage'
 import { DiaryPage } from './pages/patient/DiaryPage'
+import { HistoryPage } from './pages/patient/HistoryPage'
 import { HomePage } from './pages/patient/HomePage'
+import { MessagesPage } from './pages/patient/MessagesPage'
+import { MyDataPage } from './pages/patient/MyDataPage'
 import { ScalePage } from './pages/patient/ScalePage'
 
 function Home() {
@@ -30,7 +44,15 @@ export function App() {
 
       <Route element={<RequireRole roles={['doctor']}><Layout /></RequireRole>}>
         <Route path="/doctor/patients" element={<PatientsPage />} />
-        <Route path="/doctor/patients/:id" element={<PatientPage />} />
+        <Route path="/doctor/patients/new" element={<NewPatientPage />} />
+        <Route path="/doctor/patients/:id" element={<PatientLayout />}>
+          <Route index element={<OverviewTab />} />
+          <Route path="therapy" element={<TherapyTab />} />
+          <Route path="scales" element={<ScalesTab />} />
+          <Route path="history" element={<HistoryTab />} />
+          <Route path="messages" element={<MessagesTab />} />
+        </Route>
+        <Route path="/doctor/patients/:id/scales/:code" element={<ClinicianScalePage />} />
         <Route path="/doctor/alerts" element={<AlertsPage />} />
         <Route path="/knowledge/review" element={<ReviewPage />} />
       </Route>
@@ -38,17 +60,25 @@ export function App() {
       <Route element={<RequireRole roles={['patient']}><Layout /></RequireRole>}>
         <Route path="/me" element={<HomePage />} />
         <Route path="/me/diary" element={<DiaryPage />} />
+        <Route path="/me/history" element={<HistoryPage />} />
+        <Route path="/me/messages" element={<MessagesPage />} />
+        <Route path="/me/adverse-event" element={<AdverseEventPage />} />
+        <Route path="/me/data" element={<MyDataPage />} />
         <Route path="/me/scales/:code" element={<ScalePage />} />
       </Route>
 
       <Route element={<RequireRole roles={['doctor', 'admin']}><Layout /></RequireRole>}>
         <Route path="/knowledge" element={<KnowledgePage />} />
         <Route path="/knowledge/import" element={<ImportScalePage />} />
+        <Route path="/knowledge/scales/new" element={<ScaleEditorPage />} />
+        <Route path="/knowledge/scales/:code" element={<ScaleEditorPage />} />
       </Route>
 
       <Route element={<RequireRole roles={['admin']}><Layout /></RequireRole>}>
         <Route path="/admin/system" element={<SystemPage />} />
         <Route path="/admin/users" element={<UsersPage />} />
+        <Route path="/admin/audit" element={<AuditPage />} />
+        <Route path="/knowledge/:kind/:code/versions" element={<VersionsPage />} />
       </Route>
 
       <Route path="*" element={<NotFoundPage />} />

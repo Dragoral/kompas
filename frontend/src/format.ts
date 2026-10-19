@@ -43,7 +43,11 @@ export const DRUG_STATUS_LABEL: Record<string, string> = {
 
 export const SPECIALTY_LABEL: Record<string, string> = {
   psychiatrist: 'психиатр',
+  psychotherapist: 'психотерапевт',
   therapist: 'терапевт',
+  neurologist: 'невролог',
+  gp: 'врач общей практики',
+  other: 'другая',
 }
 
 export const ROLE_LABEL: Record<string, string> = {

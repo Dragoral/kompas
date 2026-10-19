@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from .. import bus, notify
 from ..bus import doctor_channel, patient_channel
 from ..models import Alert, ClinicalAction, Patient, ScaleAssignment, now
-from . import context, knowledge, logic, recommend
+from . import context, knowledge, logic, recommend, variables
 
 SEV_RANK = {"critical": 3, "high": 2, "medium": 1}
 
@@ -32,8 +32,10 @@ def _action_arg(a):
     return None if isinstance(a, str) else next(iter(a.values()))
 
 
-def process(db: Session, patient: Patient, trigger_ref: str, received_at: datetime | None = None) -> list[Alert]:
-    """Вызывается после сохранения любых данных пациента. Возвращает новые алерты."""
+def process(db: Session, patient: Patient, trigger_ref: str, received_at: datetime | None = None,
+            suppress: frozenset[str] = frozenset()) -> list[Alert]:
+    """Вызывается после сохранения любых данных пациента. Возвращает новые алерты.
+    suppress — правила, которые не создают алерт в этом пересчёте (только что закрытые врачом)."""
     received_at = received_at or now()
     kb = knowledge.get(db)
     ctx = context.build(db, patient)
@@ -43,11 +45,12 @@ def process(db: Session, patient: Patient, trigger_ref: str, received_at: dateti
     open_by_rule = {a.rule_id: a for a in open_alerts}
 
     for rule in kb["rules"].get("alerts", {}).get("rules", []):
-        if not logic.safe_eval(rule["when"], ctx, f"alerts:{rule.get('id')}"):
+        if rule["id"] in suppress or not logic.safe_eval(rule["when"], ctx, f"alerts:{rule.get('id')}"):
             continue
         existing = open_by_rule.get(rule["id"])
-        # Повторно не дублируем открытый алерт; критические — на каждое новое событие
-        if existing and (rule["severity"] != "critical" or existing.trigger_ref == trigger_ref):
+        # Открытый алерт не дублируется. Критический повторяется, только если появились
+        # новые данные, на которые опирается правило (новый ответ, новое высказывание)
+        if existing and not (rule["severity"] == "critical" and _new_evidence(rule, ctx, existing)):
             continue
         actions = rule.get("actions", [])
         alert = Alert(
@@ -117,7 +120,19 @@ def _propose(kind: str, title: str):
     return act
 
 
+def _new_evidence(rule: dict, ctx: dict, existing: Alert) -> bool:
+    observed = ctx.get("_observed_at", {})
+    times = [observed.get(".".join(path.split(".")[:2])) for path in variables.referenced(rule["when"])]
+    times = [t for t in times if t is not None]
+    return bool(times) and max(times) > existing.created_at
+
+
 def _request_scale(db: Session, patient: Patient, alert: Alert, arg) -> None:
+    pending = db.scalar(select(ScaleAssignment.id).where(
+        ScaleAssignment.patient_id == patient.id, ScaleAssignment.scale_code == arg, ScaleAssignment.active.is_(True),
+        ScaleAssignment.every_days.is_(None), ScaleAssignment.next_due <= date.today()))
+    if pending:  # внеплановая оценка уже назначена и ещё не пройдена
+        return
     db.add(ScaleAssignment(patient_id=patient.id, scale_code=arg, every_days=None, next_due=date.today(),
                            reason=f"Внеплановая оценка: {alert.title}"))
 

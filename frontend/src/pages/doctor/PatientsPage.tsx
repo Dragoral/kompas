@@ -28,6 +28,7 @@ export function PatientsPage() {
   return (
     <>
       <h1>Мои пациенты</h1>
+      <p><Link to="/doctor/patients/new">Добавить пациента</Link></p>
       <form className="toolbar" role="search" onSubmit={onSearch}>
         <label>
           Поиск

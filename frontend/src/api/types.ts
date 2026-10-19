@@ -117,6 +117,7 @@ export interface PatientCard {
   alerts: Alert[]
   actions: ClinicalAction[]
   assignments: { id: number; scale_code: string; every_days: number | null; next_due: string | null; reason: string | null }[]
+  history: History
 }
 
 export interface RouteReason {
@@ -267,4 +268,19 @@ export interface SystemStatus {
   knowledge_drafts_pending: number
   backups: { count: number; latest: string | null }
   checked_at: string
+}
+
+export interface History {
+  scales: Record<string, { at: string; score: number; band: string | null; severity: number | null }[]>
+  diary: { day: string; mood: number | null; anxiety: number | null; sleep_hours: number | null; sleep_quality: number | null }[]
+  adherence: { day: string; taken: number; planned: number }[]
+}
+
+export interface Message {
+  id: number
+  patient_id: number
+  sender_role: 'doctor' | 'patient'
+  text: string
+  created_at: string
+  read_at: string | null
 }

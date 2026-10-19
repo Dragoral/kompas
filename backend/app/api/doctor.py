@@ -487,7 +487,7 @@ def alert_resolve(aid: int, data: ResolveIn, request: Request, user: User = Depe
     a.resolution = data.resolution
     auth.audit(db, user, "alert_resolved", "alert", a.id, patient_id=a.patient_id, ip=auth.client_ip(request))
     p = db.get(Patient, a.patient_id)
-    alerts.process(db, p, f"resolve:{a.id}")  # пересчёт риска
+    alerts.process(db, p, f"resolve:{a.id}", suppress=frozenset({a.rule_id}))  # пересчёт риска
     alerts.commit(db)
     return alerts.alert_dict(a)
 

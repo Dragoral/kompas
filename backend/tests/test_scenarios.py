@@ -184,3 +184,38 @@ def test_patient_list_filters(client, tokens):
     r = client.get("/api/doctor/patients", headers=h, params={"sort": "age", "desc": False, "limit": 1})
     assert len(r.json()) == 1 and int(r.headers["X-Total-Count"]) >= 3
     assert client.get("/api/doctor/patients", headers=h, params={"severity": "bad"}).status_code == 422
+
+
+def test_critical_alert_not_repeated_on_unrelated_events(client, tokens):
+    """Старый ответ PHQ-9 п. 9 не порождает новые критические алерты на каждое событие
+    пациента; новый ответ с тем же признаком — порождает. Внеплановая C-SSRS не дублируется."""
+    h = tokens["patient6"]
+    p = pid(client, tokens, "psychiatrist", "P-DEMO6")
+
+    def suicide_alerts():
+        return [a for a in client.get("/api/doctor/alerts", headers=tokens["psychiatrist"]).json()
+                if a["patient_id"] == p and a["rule_id"] == "suicide_phq9"]
+
+    def cssrs_due():
+        return sum(s["code"] == "CSSRS" for s in client.get("/api/me/overview", headers=h).json()["due_scales"])
+
+    before = len(suicide_alerts())
+    client.post("/api/me/scales", headers=h, json={"scale_code": "PHQ9", "answers": phq9(item9=1, total=10), "client_id": str(uuid.uuid4())})
+    assert len(suicide_alerts()) == before + 1
+    for _ in range(2):
+        client.post("/api/me/scales", headers=h, json={"scale_code": "GAD7", "answers": {str(i): 1 for i in range(1, 8)},
+                                                       "client_id": str(uuid.uuid4())})
+    assert len(suicide_alerts()) == before + 1
+    client.post("/api/me/scales", headers=h, json={"scale_code": "PHQ9", "answers": phq9(item9=2, total=12), "client_id": str(uuid.uuid4())})
+    assert len(suicide_alerts()) == before + 2
+    assert cssrs_due() == 1
+
+
+def test_resolved_alert_not_recreated_by_resolve_itself(client, tokens):
+    p = pid(client, tokens, "psychiatrist", "P-DEMO6")
+    doc = tokens["psychiatrist"]
+    open_ = [a for a in client.get("/api/doctor/alerts", headers=doc).json() if a["patient_id"] == p and a["severity"] != "critical"]
+    a = open_[0]
+    assert client.post(f"/api/doctor/alerts/{a['id']}/resolve", headers=doc, json={"resolution": "Связалась с пациентом"}).status_code == 200
+    after = [x for x in client.get("/api/doctor/alerts", headers=doc).json() if x["patient_id"] == p and x["rule_id"] == a["rule_id"]]
+    assert after == []
