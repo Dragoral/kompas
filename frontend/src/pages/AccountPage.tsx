@@ -179,7 +179,7 @@ function PushSettings({ role }: { role: string }) {
       {state === 'on' && (
         <div className="row">
           <button type="button" className="secondary" disabled={pending}
-                  onClick={() => run(() => api.post('/api/push/test'), 'Тестовое уведомление отправлено — придёт в течение нескольких секунд.')}>Проверить</button>
+                  onClick={() => run(() => api.post('/api/push/test'), 'Тестовое уведомление отправлено. Если оно не появилось, проверьте режим «Не беспокоить» в системе.')}>Проверить</button>
           <button type="button" className="secondary" disabled={pending} onClick={() => run(disablePush, 'Уведомления отключены.')}>Отключить</button>
         </div>
       )}

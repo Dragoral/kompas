@@ -1,13 +1,15 @@
 """Подписка устройства на push-уведомления (Web Push). Подключает сам пользователь в учётной записи."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+import secrets
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from .. import auth, notify, webpush
-from ..db import get_db
+from ..db import WriteSession, get_db
 from ..models import PushSubscription, User, now
 
 router = APIRouter(prefix="/api/push", tags=["push"])
@@ -64,9 +66,15 @@ def unsubscribe(endpoint: str = Query(max_length=1024), user: User = Depends(aut
     return {"ok": True}
 
 
+def _send_now() -> None:
+    with WriteSession() as db:
+        notify.send_pending(db)
+
+
 @router.post("/test")
-def test_push(user: User = Depends(auth.current_user), db: Session = Depends(get_db)):
-    if not notify.enqueue_push(db, user.id, "Компас", "Уведомления работают", "/", "test"):
+def test_push(background: BackgroundTasks, user: User = Depends(auth.current_user), db: Session = Depends(get_db)):
+    if not notify.enqueue_push(db, user.id, "Компас", "Уведомления работают", "/", f"test-{secrets.token_hex(4)}"):
         raise HTTPException(409, "Уведомления не включены ни на одном устройстве")
     db.commit()
-    return {"ok": True, "note": "Уведомление придёт в течение нескольких секунд"}
+    background.add_task(_send_now)  # проверка — сразу, не дожидаясь фоновой очереди
+    return {"ok": True}

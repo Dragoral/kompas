@@ -61,6 +61,7 @@ self.addEventListener('push', (event) => {
     icon: '/kompas-icon.svg',
     badge: '/kompas-icon.svg',
     data: { url: data.url },
+    renotify: Boolean(data.tag),  // повторное напоминание с той же меткой снова показывается со звуком
     requireInteraction: data.urgency === 'high',
   }));
 });

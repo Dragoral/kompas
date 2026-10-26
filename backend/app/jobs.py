@@ -186,7 +186,7 @@ async def _loop(name: str, fn, period: float, initial_delay: float = 0):
 SCHEDULE = {
     "escalation": (escalation, ESCALATION_CHECK_SEC),
     "maintenance": (maintenance, 60),
-    "notifications": (notifications, 5),
+    "notifications": (notifications, 2),
     "reminders": (reminders, 60),
     "backups": (backups, int(os.getenv("BACKUP_INTERVAL_MIN", "15")) * 60),
     "backup_drill": (backup_drill, int(os.getenv("BACKUP_DRILL_INTERVAL_HOURS", "168")) * 3600),
