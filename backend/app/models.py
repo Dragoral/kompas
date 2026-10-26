@@ -329,6 +329,7 @@ class Alert(Base):
     pushed_at: Mapped[datetime | None] = mapped_column(DateTime)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime)
     acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime)
     acknowledged_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     resolution_enc: Mapped[str | None] = mapped_column(Text)
     resolution = Sealed("resolution_enc")

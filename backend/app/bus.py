@@ -21,7 +21,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 log = logging.getLogger("kompas.bus")
-POLL_SEC = 0.1
+POLL_SEC = 0.05
 REPLAY_WINDOW = timedelta(hours=24)
 LOOKBACK_WINDOW = timedelta(seconds=15)
 SEEN_LIMIT = 10_000
@@ -79,11 +79,11 @@ class Dispatcher:
             forward = db.execute(
                 select(*columns).where(Event.id > current_cursor).order_by(Event.id).limit(2000)
             ).all()
-            late_stmt = select(*columns).where(Event.id <= current_cursor, Event.created_at >= cutoff)
-            seen_ids = list(self._seen.keys())
-            if seen_ids:
-                late_stmt = late_stmt.where(Event.id.not_in(seen_ids))
-            late = db.execute(late_stmt.order_by(Event.created_at, Event.id).limit(2000)).all()
+            # Кандидатов за короткое окно мало: уже доставленные отсеиваются в памяти,
+            # а не списком до SEEN_LIMIT параметров в SQL на каждом опросе.
+            late = [row for row in db.execute(
+                select(*columns).where(Event.id <= current_cursor, Event.created_at >= cutoff)
+                .order_by(Event.id).limit(2000)).all() if int(row[0]) not in self._seen]
         rows_by_id = {int(row[0]): tuple(row) for row in (*late, *forward)}
         fresh = []
         for ev_id in sorted(rows_by_id):

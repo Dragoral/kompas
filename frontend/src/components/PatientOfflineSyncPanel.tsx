@@ -9,6 +9,7 @@ const KIND_LABEL: Record<string, string> = { scale: 'Результат шкал
 /** Visible only for the patient account; data is sent to the existing idempotent /api/me/sync endpoint. */
 export function PatientOfflineSyncPanel() {
   const { user } = useAuth()
+  const patientUserId = user?.role === 'patient' ? user.id : null
   const [items, setItems] = useState<OfflineQueueItem[]>([])
   const [loading, setLoading] = useState(false)
   const [notice, setNotice] = useState('')
@@ -16,17 +17,17 @@ export function PatientOfflineSyncPanel() {
   const [isOnline, setIsOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine)
 
   const refresh = useCallback(async () => {
-    if (!user || user.role !== 'patient') { setItems([]); return }
-    try { setItems(await listOfflineQueue(user.id)) }
+    if (patientUserId === null) { setItems([]); return }
+    try { setItems(await listOfflineQueue(patientUserId)) }
     catch { setNotice('Не удалось прочитать локальную очередь. Проверьте поддержку хранилища браузера.') }
-  }, [user?.id, user?.role])
+  }, [patientUserId])
 
   const syncNow = useCallback(async () => {
-    if (!user || user.role !== 'patient') return
+    if (patientUserId === null) return
     if (!isOnline) { setNotice('Нет подключения. Записи останутся на этом устройстве до восстановления связи.'); return }
     setLoading(true); setNotice(''); setFailures([])
     try {
-      const queued = await listOfflineQueue(user.id)
+      const queued = await listOfflineQueue(patientUserId)
       if (!queued.length) { setItems([]); setNotice(''); return }
       const response = await api.post<{ results: SyncResult[] }>('/api/me/sync', { items: queued.map((item) => ({ kind: item.kind, data: item.data })) })
       const acceptedIds = new Set(response.results.filter((r) => r.ok && r.client_id).map((r) => r.client_id as string))
@@ -39,10 +40,10 @@ export function PatientOfflineSyncPanel() {
     } catch (e) {
       setNotice(e instanceof Error ? `Синхронизация не выполнена: ${e.message}` : 'Синхронизация не выполнена; записи сохранены локально.')
     } finally { setLoading(false) }
-  }, [user?.id, user?.role, refresh, isOnline])
+  }, [patientUserId, refresh, isOnline])
 
   useEffect(() => {
-    if (!user || user.role !== 'patient') return
+    if (patientUserId === null) return
     void refresh()
     if (navigator.onLine) void syncNow()
     const onQueue = () => {
@@ -61,7 +62,7 @@ export function PatientOfflineSyncPanel() {
       window.removeEventListener('online', onOnline)
       window.removeEventListener('offline', onOffline)
     }
-  }, [user?.id, user?.role, refresh, syncNow])
+  }, [patientUserId, refresh, syncNow])
 
   if (!user || user.role !== 'patient' || (!items.length && !notice && !failures.length)) return null
   return <section className={`offline-sync-panel ${isOnline ? '' : 'offline'}`} aria-live="polite">

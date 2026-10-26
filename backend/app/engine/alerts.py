@@ -7,7 +7,7 @@
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -63,7 +63,7 @@ def process(db: Session, patient: Patient, trigger_ref: str, received_at: dateti
             continue
         if existing and rule["severity"] != "critical":
             continue
-        if not existing and latest and latest.status == "resolved" and not _new_evidence(rule, ctx, latest):
+        if not existing and latest and latest.status == "resolved" and not _may_repeat_after_resolve(rule, ctx, latest):
             continue
         actions = rule.get("actions", [])
         alert = Alert(
@@ -151,11 +151,29 @@ def _propose(kind: str, title: str):
     return act
 
 
-def _new_evidence(rule: dict, ctx: dict, existing: Alert) -> bool:
+def _evidence_at(rule: dict, ctx: dict) -> datetime | None:
     observed = ctx.get("_observed_at", {})
     times = [observed.get(".".join(path.split(".")[:2])) for path in variables.referenced(rule["when"])]
     times = [t for t in times if t is not None]
-    return bool(times) and max(times) > existing.created_at
+    return max(times) if times else None
+
+
+def _new_evidence(rule: dict, ctx: dict, existing: Alert) -> bool:
+    t = _evidence_at(rule, ctx)
+    return t is not None and t > existing.created_at
+
+
+# Закрытое врачом оповещение по правилу без отметок времени в данных (например, «нет ответа
+# на терапию») повторяется не раньше этого срока, если состояние сохраняется.
+RESOLVED_QUIET = timedelta(days=7)
+
+
+def _may_repeat_after_resolve(rule: dict, ctx: dict, resolved: Alert) -> bool:
+    closed_at = resolved.resolved_at or resolved.acknowledged_at or resolved.created_at
+    t = _evidence_at(rule, ctx)
+    if t is not None:
+        return t > closed_at
+    return now() - closed_at >= RESOLVED_QUIET
 
 
 def _request_scale(db: Session, patient: Patient, alert: Alert, arg) -> None:

@@ -63,6 +63,8 @@ def test_user_management_and_reassignment(client, tokens):
     assert request.status_code == 200 and request.json()['status'] == 'pending'
     assert client.get(f"/api/doctor/patients/{p}", headers=h).status_code == 403
     assert client.post(f"/api/admin/attending-requests/{request.json()['request_id']}/approve",
+                       headers=adm, json={}).status_code == 403  # есть второй администратор — сам себе нельзя
+    assert client.post(f"/api/admin/attending-requests/{request.json()['request_id']}/approve",
                        headers=a2h, json={'comment': 'проверено'}).status_code == 200
     assert client.get(f"/api/doctor/patients/{p}", headers=h).status_code == 200
     assert client.get(f"/api/doctor/patients/{p}", headers=tokens["psychiatrist"]).status_code == 403
@@ -72,6 +74,17 @@ def test_user_management_and_reassignment(client, tokens):
     assert back.status_code == 200
     assert client.post(f"/api/admin/attending-requests/{back.json()['request_id']}/approve",
                        headers=adm, json={'comment': 'возврат согласован'}).status_code == 200
+    # единственный действующий администратор подтверждает сам, это фиксируется в аудите
+    a2id = next(u["id"] for u in client.get("/api/admin/users", headers=adm).json() if u["login"] == "adminsecond")
+    client.patch(f"/api/admin/users/{a2id}", headers=adm, json={"active": False})
+    solo = client.post(f"/api/admin/patients/{p}/attending", headers=adm, json={"doctor_id": r["id"], "reason": "единственный админ"})
+    assert client.post(f"/api/admin/attending-requests/{solo.json()['request_id']}/approve", headers=adm, json={}).status_code == 200
+    log = client.get("/api/admin/audit?action=attending_changed", headers=adm).json()
+    assert log[0]["details"]["single_admin"] is True
+    client.post(f"/api/admin/patients/{p}/attending", headers=adm, json={"doctor_id": 1, "reason": "вернуть прежнего врача"})
+    back2 = client.get("/api/admin/attending-requests", headers=adm).json()[0]
+    client.post(f"/api/admin/attending-requests/{back2['id']}/approve", headers=adm, json={})
+
     client.patch(f"/api/admin/users/{r['id']}", headers=adm, json={"active": False})
     assert client.get("/api/auth/me", headers=h).status_code == 401  # блокировка — сессии отозваны
 

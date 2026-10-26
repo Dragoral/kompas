@@ -327,7 +327,10 @@ def approve_reassignment(rid: int, data: ReassignmentDecisionIn, request: Reques
     item = db.get(PatientReassignmentRequest, rid)
     if not item or item.status != "pending":
         raise HTTPException(404, "Ожидающий запрос не найден")
-    if item.requested_by == user.id:
+    # Принцип двух лиц, если в организации есть другой действующий администратор;
+    # при единственном администраторе подтверждение им самим фиксируется в аудите.
+    other_admins = db.scalar(select(User.id).where(User.role == "admin", User.active.is_(True), User.id != user.id).limit(1))
+    if item.requested_by == user.id and other_admins:
         raise HTTPException(403, "Запрос должен подтвердить другой администратор")
     patient = db.get(Patient, item.patient_id)
     target = db.get(User, item.to_doctor_id)
@@ -346,7 +349,7 @@ def approve_reassignment(rid: int, data: ReassignmentDecisionIn, request: Reques
     item.decision_comment = data.comment or None
     auth.audit(db, user, "attending_changed", "patient", patient.id, patient_id=patient.id,
                ip=auth.client_ip(request), request_id=item.id, from_doctor=old, to_doctor=target.id,
-               requested_by=item.requested_by)
+               requested_by=item.requested_by, single_admin=item.requested_by == user.id)
     db.commit()
     return {"ok": True, "doctor_id": target.id, "status": item.status}
 
@@ -357,8 +360,6 @@ def reject_reassignment(rid: int, data: ReassignmentDecisionIn, request: Request
     item = db.get(PatientReassignmentRequest, rid)
     if not item or item.status != "pending":
         raise HTTPException(404, "Ожидающий запрос не найден")
-    if item.requested_by == user.id:
-        raise HTTPException(403, "Запрос должен рассмотреть другой администратор")
     item.status, item.decided_by, item.decided_at = "rejected", user.id, now()
     item.decision_comment = data.comment or "Отклонено без комментария"
     auth.audit(db, user, "attending_reassignment_rejected", "patient_reassignment_request", item.id,

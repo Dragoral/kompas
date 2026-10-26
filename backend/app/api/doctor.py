@@ -413,6 +413,9 @@ def recommendations(pid: int, request: Request, user: User = Depends(doctor_only
     return res
 
 
+MONITORING_PLAN = "План мониторинга:"
+
+
 class RegimenIn(BaseModel):
     """Dose parameters entered by a clinician; daily dose is computed server-side."""
     dose_mg: float = Field(gt=0, le=1000)
@@ -437,11 +440,10 @@ def prescribe(pid: int, data: PrescribeIn, request: Request, user: User = Depend
     drug = kb["drug"].get(data.drug_id)
     if not drug:
         raise HTTPException(404, "Препарат не найден в справочнике (рекомендуются только препараты, зарегистрированные в РФ)")
+    warnings: list[str] = []
     if drug.get("verified") is not True:
-        raise HTTPException(409, {
-            "message": "Назначение заблокировано: сведения о препарате не прошли клиническую проверку по актуальной официальной инструкции.",
-            "drug_id": drug["id"], "verified": False,
-        })
+        # Не блокируем: решение за врачом, но предупреждаем и фиксируем в аудите
+        warnings.append("Сведения о препарате ещё не сверены с инструкцией в ГРЛС — проверьте режим и противопоказания по инструкции")
     if data.mode == "remote" and not p.in_person_visit_at:
         raise HTTPException(409, "Дистанционная коррекция терапии возможна только после установления диагноза на очном приёме (193н п. 38)")
     ctx = context.build(db, p)
@@ -470,48 +472,19 @@ def prescribe(pid: int, data: PrescribeIn, request: Request, user: User = Depend
 
     regimen = dict((ind or {}).get("regimen") or {"dose_mg": None, "times_per_day": 1})
     if data.regimen is not None:
-        # For an applicable registered indication, use its explicit maximum daily dose;
-        # if there is no separate maximum, do not exceed the catalogued daily regimen.
-        # For off-label use, cap the entered dose at the largest daily dose stated in
-        # any registered indication, and still require the clinician's rationale above.
-        max_daily = regimen.get("max_daily_mg") or regimen.get("daily_mg")
-        if max_daily is None and regimen.get("dose_mg") is not None:
-            max_daily = float(regimen["dose_mg"]) * int(regimen.get("times_per_day") or 1)
-        if ind is None:
-            known_limits = []
-            for candidate in drug.get("indications", []):
-                candidate_regimen = candidate.get("regimen") or {}
-                candidate_limit = candidate_regimen.get("max_daily_mg") or candidate_regimen.get("daily_mg")
-                if candidate_limit is None and candidate_regimen.get("dose_mg") is not None:
-                    candidate_limit = float(candidate_regimen["dose_mg"]) * int(candidate_regimen.get("times_per_day") or 1)
-                if candidate_limit is not None:
-                    known_limits.append(float(candidate_limit))
-            max_daily = max(known_limits) if known_limits else None
-        # If the evaluation flags additional cautions, do not allow a dose above the
-        # standard regimen without a specialist-verified patient-specific rule.
-        base_daily = regimen.get("daily_mg")
-        if ev.get("cautions") and base_daily is not None:
-            max_daily = min(float(max_daily), float(base_daily)) if max_daily is not None else float(base_daily)
-        elif ev.get("cautions") and ind is None:
-            # Without a patient-matched registered indication, use the most
-            # conservative catalogued standard daily regimen as the ceiling.
-            standard_limits = []
-            for candidate in drug.get("indications", []):
-                candidate_regimen = candidate.get("regimen") or {}
-                standard = candidate_regimen.get("daily_mg")
-                if standard is None and candidate_regimen.get("dose_mg") is not None:
-                    standard = float(candidate_regimen["dose_mg"]) * int(candidate_regimen.get("times_per_day") or 1)
-                if standard is not None:
-                    standard_limits.append(float(standard))
-            if standard_limits and max_daily is not None:
-                max_daily = min(float(max_daily), min(standard_limits))
-        if max_daily is None:
-            raise HTTPException(422, "Для этого препарата в справочнике нет проверяемого предела дозы; введите назначение после дополнения справочника специалистом")
+        # Жёсткий предел — только максимальная суточная доза из инструкции (по показанию,
+        # а вне показаний — наибольшая из зарегистрированных). Нет предела в справочнике —
+        # предупреждение врачу, а не отказ: дозу выбирает врач.
+        limits = [float(x["regimen"]["max_daily_mg"]) for x in ([ind] if ind else drug.get("indications", []))
+                  if (x.get("regimen") or {}).get("max_daily_mg")]
+        max_daily = max(limits) if limits else None
         daily = float(data.regimen.dose_mg) * int(data.regimen.times_per_day)
-        if daily > float(max_daily) + 1e-9:
-            raise HTTPException(422, {"message": f"Суточная доза превышает допустимый предел справочника ({max_daily} мг/сут)", "max_daily_mg": max_daily})
+        if max_daily is not None and daily > max_daily + 1e-9:
+            raise HTTPException(422, {"message": f"Суточная доза превышает максимальную по инструкции ({max_daily:g} мг/сут)", "max_daily_mg": max_daily})
+        if max_daily is None:
+            warnings.append("В справочнике не указана максимальная суточная доза — сверьте дозу с инструкцией")
         regimen.update({"dose_mg": float(data.regimen.dose_mg), "times_per_day": int(data.regimen.times_per_day),
-                        "daily_mg": round(daily, 3), "max_daily_mg": float(max_daily)})
+                        "daily_mg": round(daily, 3), "max_daily_mg": max_daily})
 
     # A contradictory evaluator result indicates stale/malformed knowledge and must not
     # silently turn into a registered-indication prescription.
@@ -526,14 +499,23 @@ def prescribe(pid: int, data: PrescribeIn, request: Request, user: User = Depend
     rx.rationale = data.rationale
     db.flush()
     services.schedule_doses(db, rx)
+    # План мониторинга прежнего препарата заменяется планом нового; шкалы, назначенные
+    # врачом вручную, сохраняются и не дублируются
+    for a in db.scalars(select(ScaleAssignment).where(ScaleAssignment.patient_id == p.id, ScaleAssignment.active.is_(True),
+                                                      ScaleAssignment.reason.startswith(MONITORING_PLAN))):
+        a.active = False
+    manual = set(db.scalars(select(ScaleAssignment.scale_code).where(
+        ScaleAssignment.patient_id == p.id, ScaleAssignment.active.is_(True), ScaleAssignment.every_days.is_not(None))))
     for scale in (drug.get("monitoring") or {}).get("scales", []):
+        if scale["scale"] in manual:
+            continue
         db.add(ScaleAssignment(patient_id=p.id, scale_code=scale["scale"], every_days=scale["every_days"], next_due=date.today(),
-                               reason=f"План мониторинга: {drug['trade_name']}"))
+                               reason=f"{MONITORING_PLAN} {drug['trade_name']}"))
     auth.audit(db, user, "prescription_confirmed", "prescription", rx.id, patient_id=p.id, drug=drug["id"],
-               status=ev["status"], mode=data.mode, indication=ind and ind["id"], regimen=regimen)
+               status=ev["status"], mode=data.mode, indication=ind and ind["id"], regimen=regimen, warnings=warnings)
     alerts.process(db, p, f"rx:{rx.id}")
     alerts.commit(db)
-    return {"id": rx.id, "status": ev["status"], "regimen": regimen}
+    return {"id": rx.id, "status": ev["status"], "regimen": regimen, "warnings": warnings}
 
 
 class StopIn(BaseModel):
@@ -674,7 +656,7 @@ class ResolveIn(BaseModel):
 @router.post("/alerts/{aid}/resolve")
 def alert_resolve(aid: int, data: ResolveIn, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
     a = _alert(user, aid, db)
-    a.status = "resolved"
+    a.status, a.resolved_at = "resolved", now()
     a.acknowledged_at = a.acknowledged_at or now()
     a.resolution = data.resolution
     auth.audit(db, user, "alert_resolved", "alert", a.id, patient_id=a.patient_id, ip=auth.client_ip(request))

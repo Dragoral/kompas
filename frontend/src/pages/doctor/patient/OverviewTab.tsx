@@ -21,7 +21,7 @@ export function OverviewTab() {
   return (
     <>
       <Summary id={id} />
-      <VisitsHistory patientId={id} onCreated={reload} />
+      <VisitsHistory patientId={Number(id)} />
       <section aria-labelledby="alerts-h">
         <h2 id="alerts-h">Оповещения</h2>
         {openAlerts.length === 0 ? <p>Открытых оповещений нет.</p> : openAlerts.map((a) => (
@@ -149,7 +149,7 @@ function ActionItem({ action, onChange }: { action: ClinicalAction; onChange: ()
         )}
       </p>
       <p className="muted small">{formatDateTime(action.created_at)}</p>
-      {action.payload?.urgency && <p><strong>Срочность:</strong> {String(action.payload.urgency)}</p>}
+      {action.payload?.urgency ? <p><strong>Срочность:</strong> {String(action.payload.urgency)}</p> : null}
       {Array.isArray(action.payload?.reasons) && action.payload.reasons.length > 0 && <div>
         <strong>Основания маршрутизации</strong>
         <ul>{(action.payload.reasons as { title?: string; source?: string; id?: string }[]).map((reason, i) => <li key={reason.id ?? i}>

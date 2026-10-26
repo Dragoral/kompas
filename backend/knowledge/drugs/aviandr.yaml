@@ -27,13 +27,13 @@ indications:
   - id: gad
     title: Генерализованное тревожное расстройство (взрослые)
     icd10: [F41.1]
-    regimen: { dose_mg: 20, times_per_day: 2, daily_mg: 40, timing: "утром и вечером, за 30 мин до еды", duration: "определяет врач (хроническое течение)" }
+    regimen: { dose_mg: 20, times_per_day: 2, daily_mg: 40, max_daily_mg: 40, timing: "утром и вечером, за 30 мин до еды", duration: "определяет врач (хроническое течение)" }
     source: *instr
   - id: post_covid_anxiety
     title: Тревожные состояния после COVID-19 у пациентов со стрессовой реакцией и нарушением адаптации лёгкой и средней степени
     icd10: [F43.0, F43.2, F43.9, F41.9]
     requires: { "==": [{ var: patient.post_covid }, true] }
-    regimen: { dose_mg: 20, times_per_day: 2, daily_mg: 40, timing: "утром и вечером, за 30 мин до еды", duration: "4 недели, по решению врача до 6 недель" }
+    regimen: { dose_mg: 20, times_per_day: 2, daily_mg: 40, max_daily_mg: 40, timing: "утром и вечером, за 30 мин до еды", duration: "4 недели, по решению врача до 6 недель" }
     source: *instr
 
 # Абсолютные противопоказания: при срабатывании назначение блокируется

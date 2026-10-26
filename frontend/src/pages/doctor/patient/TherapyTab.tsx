@@ -134,9 +134,7 @@ function RecommendationsView({ id, data, onPrescribed }: { id: string; data: Rec
                 <td>{formatRegimen(d.regimen)}</td>
                 <td className="small"><DrugReasons drug={d} /></td>
                 <td>
-                  <button type="button" className="secondary" disabled={d.verified !== true}
-                          title={d.verified === true ? 'Оформить решение врача' : 'Назначение заблокировано до клинической проверки справочника'}
-                          onClick={() => setSelected(d.drug_id)}>{d.verified === true ? 'Назначить…' : 'Не проверено'}</button>
+                  <button type="button" className="secondary" onClick={() => setSelected(d.drug_id)}>Назначить…</button>
                 </td>
               </tr>
             ))}
@@ -248,9 +246,12 @@ function PrescribeForm({ id, drug, onCancel, onDone }: {
                    value={timesPerDay} onChange={(e) => setTimesPerDay(e.target.value)} />
           </label>
         </div>
-        {drug.regimen?.max_daily_mg != null && <p className="muted small">Максимум по справочнику: {drug.regimen.max_daily_mg} мг/сут. При наличии предостережений сервер применит более консервативный предел.</p>}
+        {drug.regimen?.max_daily_mg != null && <p className="muted small">Максимум по инструкции: {drug.regimen.max_daily_mg} мг/сут.</p>}
         {drug.status === 'off_label' && <p className="muted small">Дозу вне зарегистрированного показания задаёт врач; сервер проверит положительные значения и пределы, указанные в справочнике.</p>}
       </fieldset>
+      {drug.verified !== true && (
+        <p className="message message-error">Сведения о препарате ещё не сверены с инструкцией в ГРЛС. Проверьте режим и противопоказания по инструкции перед назначением.</p>
+      )}
       {needsAck && <p className={drug.status === 'contraindicated' ? 'message message-error' : 'message'}>{drug.note}</p>}
       <fieldset>
         <legend>Форма приёма</legend>

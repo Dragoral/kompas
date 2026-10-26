@@ -246,17 +246,22 @@ def test_prescription_rejects_unmatched_indication_and_oversized_dose(client, to
     assert too_high.status_code == 422
 
 
-def test_prescription_blocks_unverified_drug(client, tokens):
+def test_unverified_drug_prescribed_with_warning_and_plan_not_duplicated(client, tokens):
+    """Непроверенный справочник не блокирует решение врача, но предупреждает; при смене
+    препарата план мониторинга заменяется, а не дублируется."""
     p = pid(client, tokens, "therapist", "P-DEMO3")
-    r = client.post(
-        f"/api/doctor/patients/{p}/prescriptions",
-        headers=tokens["therapist"],
-        json={"drug_id": "sertraline", "acknowledge_off_label": True,
-              "rationale": "Проверка регрессионного ограничения для непроверенного справочника",
-              "regimen": {"dose_mg": 25, "times_per_day": 1}},
-    )
-    assert r.status_code == 409
-    assert "не прошли клиническую проверку" in str(r.json()).lower()
+    h = tokens["therapist"]
+    rationale = "Решение врача после очного осмотра, обсуждено с пациентом"
+    for drug, dose in (("sertraline", 50), ("escitalopram", 10)):
+        r = client.post(f"/api/doctor/patients/{p}/prescriptions", headers=h, json={
+            "drug_id": drug, "acknowledge_off_label": True, "acknowledge_contraindications": True,
+            "rationale": rationale, "regimen": {"dose_mg": dose, "times_per_day": 1}})
+        assert r.status_code == 200, r.text
+        assert any("не сверены" in w for w in r.json()["warnings"])
+    plan = [a for a in client.get(f"/api/doctor/patients/{p}", headers=h).json()["assignments"]
+            if (a["reason"] or "").startswith("План мониторинга")]
+    codes = [a["scale_code"] for a in plan]
+    assert len(codes) == len(set(codes)) and all("Эсциталопрам" in a["reason"] or "Ципралекс" in a["reason"] for a in plan)
 
 
 def test_patient_api_rejects_malformed_diagnosis(client, tokens):
