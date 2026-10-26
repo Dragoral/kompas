@@ -516,3 +516,10 @@ input.short { width: 6rem; }
 .login-about-link { grid-column: 1 / -1; margin: 0; padding: 10px 22px 0; text-align: center; font-size: 10px; }
 .login-about-link a { color: #287c70; text-decoration: underline; text-underline-offset: 3px; }
 @media (max-width: 650px) { .login-about-link { padding: 10px 12px 0; } }
+
+.patient-words {
+  margin: 0.5rem 0;
+  padding: 0.5rem 0.75rem;
+  border-left: 3px solid var(--border, #d0d7de);
+  white-space: pre-wrap;
+}

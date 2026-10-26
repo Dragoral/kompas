@@ -43,6 +43,8 @@ async def lifespan(app: FastAPI):
         user_columns = {col["name"] for col in inspect(conn).get_columns("users")}
         if "totp_last_step" not in user_columns:
             conn.exec_driver_sql("ALTER TABLE users ADD COLUMN totp_last_step BIGINT")
+        if "analysis" not in {col["name"] for col in inspect(conn).get_columns("adverse_events")}:
+            conn.exec_driver_sql("ALTER TABLE adverse_events ADD COLUMN analysis JSON")
         if "resolved_at" not in {col["name"] for col in inspect(conn).get_columns("alerts")}:
             conn.exec_driver_sql("ALTER TABLE alerts ADD COLUMN resolved_at TIMESTAMP")
         if "must_change_password" not in user_columns:

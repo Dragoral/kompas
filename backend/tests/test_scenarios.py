@@ -1,4 +1,5 @@
 import uuid
+from datetime import date, timedelta
 
 from conftest import PASSWORD, pid
 
@@ -277,3 +278,28 @@ def test_patient_api_rejects_malformed_diagnosis(client, tokens):
     )
     assert response.status_code == 422
     assert "МКБ-10" in response.text
+
+
+def test_dose_reminders_calendar(client, tokens):
+    r = client.get("/api/me/doses.ics", headers=tokens["patient1"])
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/calendar")
+    body = r.text
+    assert body.startswith("BEGIN:VCALENDAR\r\n") and body.count("BEGIN:VEVENT") == 2  # Авиандр: 2 приёма в сутки
+    assert "RRULE:FREQ=DAILY;UNTIL=" in body and "BEGIN:VALARM" in body
+    assert "Авиандр" not in body  # календари синхронизируются с облаком — без названия препарата
+    until = body.split("UNTIL=")[1][:8]
+    assert until >= (date.today() + timedelta(days=27)).strftime("%Y%m%d")  # горизонт 4 недели, а не конец курса
+    assert client.get("/api/me/doses.ics", headers=tokens["psychiatrist"]).status_code == 403
+
+
+def test_dose_plan_rolls_forward_while_therapy_continues(client):
+    from sqlalchemy import func, select
+
+    from app import jobs
+    from app.db import SessionLocal
+    from app.models import DoseLog, Prescription
+    jobs.maintenance()
+    with SessionLocal() as db:
+        for rx in db.scalars(select(Prescription).where(Prescription.status == "active")):
+            last = db.scalar(select(func.max(DoseLog.scheduled_for)).where(DoseLog.prescription_id == rx.id))
+            assert last.date() >= date.today() + timedelta(days=27)

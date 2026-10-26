@@ -11,18 +11,22 @@ const INTENSITY = [
 ] as const
 
 export function AdverseEventPage() {
-  const [form, setForm] = useState({ title: '', intensity: 'mild', serious: false, life_threatening: false, description: '' })
+  const [form, setForm] = useState({ intensity: 'mild', serious: false, life_threatening: false, description: '' })
   const [sent, setSent] = useState(false)
+  const [urgent, setUrgent] = useState(false)
   const [queuedOffline, setQueuedOffline] = useState(false)
-  const submit = useAction(() => api.post<{ queued_offline?: boolean }>('/api/me/adverse-events', {
-    ...form, title: form.title.trim(), description: form.description.trim() || null, client_id: crypto.randomUUID(),
+  const submit = useAction(() => api.post<{ queued_offline?: boolean; urgent?: boolean }>('/api/me/adverse-events', {
+    ...form, description: form.description.trim(), client_id: crypto.randomUUID(),
   }))
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault()
     const result = await submit.run()
     if (result?.queued_offline) setQueuedOffline(true)
-    else if (result) setSent(true)
+    else if (result) {
+      setUrgent(!!result.urgent)
+      setSent(true)
+    }
   }
 
   if (queuedOffline) {
@@ -41,6 +45,11 @@ export function AdverseEventPage() {
     return (
       <>
         <h1>Сообщение отправлено</h1>
+        {urgent && (
+          <p className="message message-error" role="alert">
+            То, что вы описали, может быть опасно. Не ждите ответа врача: позвоните 103 или 112.
+          </p>
+        )}
         <p className="message" role="status">
           Сообщение сохранено и доступно лечащему врачу. Это не гарантирует, что врач уже прочитал его; при экстренном состоянии не ждите ответа через приложение.
         </p>
@@ -57,14 +66,15 @@ export function AdverseEventPage() {
       </p>
       <form className="form ae-form" onSubmit={onSubmit}>
         <label>
-          Что произошло
-          <input
+          Что вы чувствуете? Опишите своими словами
+          <textarea
             required
             minLength={2}
-            maxLength={128}
-            placeholder="Например: головокружение, тошнота"
-            value={form.title}
-            onChange={(e) => setForm({ ...form, title: e.target.value })}
+            rows={5}
+            maxLength={4000}
+            value={form.description}
+            onChange={(e) => setForm({ ...form, description: e.target.value })}
+            placeholder="Когда началось, как проявляется, что мешает…"
           />
         </label>
 
@@ -105,17 +115,6 @@ export function AdverseEventPage() {
             onChange={(e) => setForm({ ...form, life_threatening: e.target.checked })}
           />
           <span>Состояние угрожало жизни</span>
-        </label>
-
-        <label>
-          Подробности
-          <textarea
-            rows={4}
-            maxLength={4000}
-            value={form.description}
-            onChange={(e) => setForm({ ...form, description: e.target.value })}
-            placeholder="Когда началось, как долго длится, что ещё заметили…"
-          />
         </label>
 
         <ErrorMessage error={submit.error} />

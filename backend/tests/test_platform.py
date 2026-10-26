@@ -63,3 +63,18 @@ def test_ready_hides_internal_diagnostics(client, monkeypatch):
     assert "secret internal failure" not in r.text
     assert "job:notification_sender" not in r.text
     assert r.json()["detail"] == "Сервис временно не готов"
+
+
+def test_resolved_alert_without_dated_evidence_is_quiet_for_a_week():
+    from datetime import timedelta
+    from types import SimpleNamespace
+
+    from app.engine import alerts
+    from app.models import now
+    rule = {"when": {">=": [{"var": "therapy.weeks_on_current"}, 4]}}
+    closed = SimpleNamespace(resolved_at=now() - timedelta(days=2), acknowledged_at=None, created_at=now() - timedelta(days=3))
+    assert not alerts._may_repeat_after_resolve(rule, {"_observed_at": {}}, closed)
+    closed.resolved_at = now() - timedelta(days=8)
+    assert alerts._may_repeat_after_resolve(rule, {"_observed_at": {}}, closed)
+    dated = {"when": {">=": [{"var": "scales.PHQ9.score"}, 20]}}
+    assert alerts._may_repeat_after_resolve(dated, {"_observed_at": {"scales.PHQ9": now()}}, closed)

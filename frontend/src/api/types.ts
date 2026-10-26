@@ -134,7 +134,7 @@ export interface PatientCard {
   prescriptions: Prescription[]
   alerts: Alert[]
   actions: ClinicalAction[]
-  adverse_events: { id: number; title: string; intensity: string; serious: boolean; life_threatening: boolean; expected: boolean | null; description: string | null; status: string; created_at: string }[]
+  adverse_events: AdverseEvent[]
   assignments: { id: number; scale_code: string; every_days: number | null; next_due: string | null; reason: string | null }[]
   history: History
 }
@@ -333,4 +333,28 @@ export interface Message {
   text: string
   created_at: string
   read_at: string | null
+}
+
+export interface AdverseAnalysis {
+  terms: {
+    term: string
+    in_instructions: { drug_id: string; trade_name: string; relation: string; frequency: string | null; frequency_label: string | null }[]
+  }[]
+  red_flags: { id: string; title: string; level: 'critical' | 'high' }[]
+  recognized: boolean
+  expected: boolean | null
+  drugs_checked: { drug_id: string; trade_name: string; relation: string }[]
+}
+
+export interface AdverseEvent {
+  id: number
+  title: string
+  intensity: string
+  serious: boolean
+  life_threatening: boolean
+  expected: boolean | null
+  description: string | null
+  status: string
+  created_at: string
+  analysis: AdverseAnalysis | null
 }

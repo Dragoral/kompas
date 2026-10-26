@@ -293,7 +293,8 @@ def card(pid: int, request: Request, user: User = Depends(doctor_only), db: Sess
         "alerts": [alerts.alert_dict(a, p) for a in db.scalars(select(Alert).where(Alert.patient_id == p.id).order_by(Alert.created_at.desc()).limit(50))],
         "actions": [action_dict(a) for a in db.scalars(select(ClinicalAction).where(ClinicalAction.patient_id == p.id).order_by(ClinicalAction.created_at.desc()))],
         "adverse_events": [{"id": a.id, "title": a.title, "intensity": a.intensity, "serious": a.serious, "life_threatening": a.life_threatening,
-                            "expected": a.expected, "description": a.description, "status": a.status, "created_at": a.created_at}
+                            "expected": a.expected, "description": a.description, "status": a.status, "created_at": a.created_at,
+                            "analysis": a.analysis}
                            for a in db.scalars(select(AdverseEvent).where(AdverseEvent.patient_id == p.id).order_by(AdverseEvent.created_at.desc()))],
         "assignments": [{"id": a.id, "scale_code": a.scale_code, "every_days": a.every_days, "next_due": a.next_due, "reason": a.reason}
                         for a in db.scalars(select(ScaleAssignment).where(ScaleAssignment.patient_id == p.id, ScaleAssignment.active.is_(True)))],
@@ -666,17 +667,32 @@ def alert_resolve(aid: int, data: ResolveIn, request: Request, user: User = Depe
     return alerts.alert_dict(a)
 
 
+class AeReviewIn(BaseModel):
+    # Решение врача: описана ли реакция в инструкции (влияет на извещение по приказу № 3518).
+    # Не передано — остаётся оценка системы.
+    expected: bool | None = None
+    serious: bool | None = None
+
+
 @router.post("/adverse-events/{eid}/review")
-def review_adverse_event(eid: int, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+def review_adverse_event(eid: int, request: Request, data: AeReviewIn | None = None,
+                         user: User = Depends(doctor_only), db: Session = Depends(get_db)):
     """Зафиксировать врачебный разбор нежелательного явления; самостоятельных клинических действий нет."""
     ae = db.get(AdverseEvent, eid)
     if not ae:
         raise HTTPException(404, "Нежелательное явление не найдено")
     patient = _p(user, ae.patient_id, db, request, "ae_review")
+    data = data or AeReviewIn()
     if ae.status != "reviewed":
+        system_expected = ae.expected
+        if data.expected is not None:
+            ae.expected = data.expected
+        if data.serious is not None:
+            ae.serious = data.serious
         ae.status = "reviewed"
         auth.audit(db, user, "adverse_event_reviewed", "adverse_event", ae.id,
-                   patient_id=patient.id, ip=auth.client_ip(request))
+                   patient_id=patient.id, ip=auth.client_ip(request), expected=ae.expected,
+                   system_expected=system_expected, serious=ae.serious)
         alerts.process(db, patient, f"ae-review:{ae.id}")
         alerts.commit(db)
     return {"ok": True, "id": ae.id, "status": ae.status}

@@ -15,13 +15,13 @@ from datetime import timedelta
 from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 
-from . import auth, backup, bus as bus_mod, notify, observability
+from . import auth, backup, bus as bus_mod, notify, observability, services
 from .bus import doctor_channel
 from .config import BASE_DIR, ESCALATION_CHECK_SEC
 from .crypto import vault
 from .db import IS_SQLITE, SessionLocal, WriteSession
 from .engine import alerts, knowledge
-from .models import Alert, Event, Lease, Message, Patient, StreamTicket, User, now
+from .models import Alert, Event, Lease, Message, Patient, Prescription, StreamTicket, User, now
 
 log = logging.getLogger("kompas.jobs")
 RETENTION_MESSAGES_DAYS = 365  # сопутствующие материалы — 1 год (193н п. 51)
@@ -86,6 +86,8 @@ def maintenance() -> None:
             p.full_name_enc = p.birth_date_enc = p.contacts_enc = p.name_bidx = None
             p.erased_at, p.monitoring_active = t, False
             auth.audit(db, None, "patient_crypto_shredded", "patient", p.id, patient_id=p.id)
+        for rx in db.scalars(select(Prescription).where(Prescription.status == "active")):
+            services.extend_dose_schedule(db, rx)
         db.commit()
     auth.seal_audit()
     with SessionLocal() as db:  # якорь: голова цепочки во внешний журнал (обнаружение усечения)

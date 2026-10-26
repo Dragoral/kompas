@@ -4,7 +4,7 @@ import asyncio
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -191,7 +191,9 @@ def submit_ae(data: services.AdverseIn, request: Request, user: User = Depends(p
     p = auth.own_patient(user, db)
     e, new = services.submit_adverse(db, p, data, _received(request))
     alerts.commit(db)
-    return {"id": e.id, "alerts": len(new)}
+    # Пациенту — только совет при тревожных признаках, без классификации реакции
+    urgent = [f for f in (e.analysis or {}).get("red_flags", []) if f.get("level") == "critical"]
+    return {"id": e.id, "alerts": len(new), "urgent": bool(urgent), "crisis": _crisis(new)}
 
 
 @router.get("/me/messages")
@@ -272,6 +274,17 @@ def history_for(db: Session, patient_id: int, days: int) -> dict:
         by_day[k][0] += d.status == "taken"
     adherence = [{"day": k, "taken": v[0], "planned": v[1]} for k, v in sorted(by_day.items())]
     return {"scales": scales, "diary": diary, "adherence": adherence}
+
+
+@router.get("/me/doses.ics")
+def dose_reminders(user: User = Depends(patient_only), db: Session = Depends(get_db)):
+    """Напоминания о приёме препарата для календаря телефона (формат iCalendar)."""
+    p = auth.own_patient(user, db)
+    ics = services.dose_calendar(db, p)
+    if ics is None:
+        raise HTTPException(404, "Нет действующего назначения с запланированными приёмами")
+    return Response(ics, media_type="text/calendar; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="kompas-reminders.ics"'})
 
 
 @router.get("/me/export")

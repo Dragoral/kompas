@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { api } from '../../api/client'
+import { api, download } from '../../api/client'
 import type { ConsentText, Overview } from '../../api/types'
 import { useAction, useApi } from '../../api/useApi'
 import { ErrorMessage } from '../../components/ErrorMessage'
@@ -31,6 +31,7 @@ function isDiaryDoneLocal(): boolean {
 export function HomePage() {
   const state = useApi<Overview>('/api/me/overview')
   const [queuedDose, setQueuedDose] = useState(false)
+  const reminders = useAction(() => download('/api/me/doses.ics', 'kompas-reminders.ics'))
   const dose = useAction((id: number, status: 'taken' | 'skipped') =>
     api.post<{ queued_offline?: boolean }>('/api/me/doses', { dose_id: id, status, client_id: crypto.randomUUID(), taken_at: new Date().toISOString() }))
 
@@ -76,6 +77,13 @@ export function HomePage() {
                     {o.therapy.regimen && (
                       <p className="therapy-regimen">{formatRegimen(o.therapy.regimen)}</p>
                     )}
+                    <p>
+                      <button type="button" className="secondary" disabled={reminders.pending} onClick={() => reminders.run()}>
+                        Напоминания в календарь телефона
+                      </button>
+                    </p>
+                    <p className="muted small">Откройте скачанный файл: календарь будет напоминать о каждом приёме 4 недели, даже без интернета. Если врач изменит назначение, скачайте напоминания заново.</p>
+                    <ErrorMessage error={reminders.error} />
                     {o.doses_today.length > 0 && (
                       <ul className="therapy-schedule">
                         {o.doses_today.map((d) => (

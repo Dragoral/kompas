@@ -198,10 +198,18 @@ def build(db: Session, patient: Patient, at: datetime | None = None) -> dict:
         observed["ae.open_count"] = aes[0].created_at
     if serious_aes:
         observed["ae.serious_open"] = serious_aes[0].created_at
+    flagged = [(a, f) for a in aes for f in (a.analysis or {}).get("red_flags", [])]
+    for level in ("critical", "high"):
+        hits = [a.created_at for a, f in flagged if f.get("level") == level]
+        if hits:
+            observed[f"ae.red_flag_{level}"] = max(hits)
     ctx["ae"] = {
         "open_count": len(aes),
         "serious_open": any(a.serious or a.intensity == "severe" for a in aes),
         "last_title": aes[0].title if aes else None,
+        "red_flag_critical": any(f.get("level") == "critical" for _, f in flagged),
+        "red_flag_high": any(f.get("level") == "high" for _, f in flagged),
+        "red_flag_titles": "; ".join(dict.fromkeys(f["title"] for _, f in flagged)) or None,
     }
 
     # Тексты пациента за 3 дня — скрининг высказываний
@@ -210,6 +218,7 @@ def build(db: Session, patient: Patient, at: datetime | None = None) -> dict:
     texts += [(m.created_at, m.text) for m in db.scalars(
         select(Message).where(Message.patient_id == patient.id, Message.sender_role == "patient", Message.created_at >= recent)
     )]
+    texts += [(a.created_at, a.description) for a in all_aes if a.description and a.created_at >= recent]
     hits = sorted(
         ((t, m.group(0)) for t, text in texts if (m := _self_harm_match(text))),
         key=lambda h: h[0],

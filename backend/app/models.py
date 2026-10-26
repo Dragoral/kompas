@@ -282,7 +282,8 @@ class AdverseEvent(Base):
     intensity: Mapped[str] = mapped_column(String(16))  # mild | moderate | severe
     serious: Mapped[bool] = mapped_column(Boolean, default=False)
     life_threatening: Mapped[bool] = mapped_column(Boolean, default=False)
-    expected: Mapped[bool | None] = mapped_column(Boolean)  # описана в инструкции
+    expected: Mapped[bool | None] = mapped_column(Boolean)  # описана в инструкции (подтверждает врач)
+    analysis: Mapped[dict | None] = mapped_column(JSON)  # термины, совпадения с инструкциями, тревожные признаки
     description_enc: Mapped[str | None] = mapped_column(Text)
     description = Sealed("description_enc")
     status: Mapped[str] = mapped_column(String(16), default="open")  # open | reviewed

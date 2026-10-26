@@ -72,6 +72,27 @@ export async function request<T>(method: string, path: string, body?: unknown): 
   return data as T
 }
 
+/** Скачать файл с авторизацией (календарь, выгрузки): fetch + Blob, токен не попадает в URL. */
+export async function download(path: string, filename: string): Promise<void> {
+  const token = getToken()
+  let res: Response
+  try {
+    res = await fetch(path, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+  } catch {
+    throw new ApiError(0, 'Нет связи с сервером. Проверьте подключение.', null)
+  }
+  if (!res.ok) {
+    const data = await res.json().catch(() => null)
+    throw new ApiError(res.status, data?.detail ?? `Ошибка ${res.status}`, data?.request_id ?? res.headers.get('X-Request-ID'))
+  }
+  const url = URL.createObjectURL(await res.blob())
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 export const api = {
   get: <T>(path: string) => request<T>('GET', path),
   post: <T>(path: string, body?: unknown) => request<T>('POST', path, body ?? {}),

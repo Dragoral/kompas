@@ -11,12 +11,12 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import HTTPException
-from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import select
+from pydantic import BaseModel, Field, field_validator, model_validator
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .bus import doctor_channel, patient_channel
-from .engine import alerts, knowledge, scales
+from .engine import adverse, alerts, knowledge, scales
 from .models import AdverseEvent, DiaryEntry, DoseLog, Message, Patient, Prescription, ScaleAssignment, ScaleResult, User, now
 
 
@@ -60,12 +60,20 @@ class DoseIn(BaseModel):
 
 
 class AdverseIn(BaseModel):
-    title: str = Field(min_length=2, max_length=128)
+    # Пациент описывает самочувствие своими словами (description); title — необязательное
+    # краткое название (совместимость с офлайн-очередью и старыми клиентами).
+    title: str | None = Field(None, max_length=128)
     intensity: str = Field("mild", pattern="^(mild|moderate|severe)$")
     serious: bool = False
     life_threatening: bool = False
     description: str | None = Field(None, max_length=4000)
     client_id: str | None = Field(None, max_length=64)
+
+    @model_validator(mode="after")
+    def _has_text(self):
+        if len(((self.title or "") + (self.description or "")).strip()) < 2:
+            raise ValueError("Опишите, что вы чувствуете")
+        return self
 
 
 class MessageIn(BaseModel):
@@ -157,18 +165,16 @@ def submit_adverse(db: Session, patient: Patient, data: AdverseIn, received_at: 
     if (dup := _existing(db, AdverseEvent, patient.id, data.client_id)):
         return dup, []
     rx = db.scalar(select(Prescription).where(Prescription.patient_id == patient.id, Prescription.status == "active"))
-    expected = None
-    if rx:
-        drug = knowledge.get(db)["drug"].get(rx.drug_id, {})
-        known = [x.lower() for v in drug.get("adverse_reactions", {}).values() for x in v]
-        title = data.title.lower()
-        expected = any(k in title or title in k for k in known)
-    e = AdverseEvent(patient_id=patient.id, prescription_id=rx.id if rx else None, expected=expected,
-                     **data.model_dump(exclude={"description"}))
-    if data.life_threatening:
-        e.serious = True
+    words = "\n".join(x for x in (data.title, data.description) if x)
+    result = adverse.analyze(db, patient, words, knowledge.get(db))
+    # Слова пациента — только в зашифрованном поле; открытое название — стандартные термины
+    names = [t["term"] for t in result["terms"]] or [f["title"].split(" (")[0] for f in result["red_flags"]]
+    title = ", ".join(names)[:128] or "Не распознано — см. описание"
+    e = AdverseEvent(patient_id=patient.id, prescription_id=rx.id if rx else None, expected=result["expected"],
+                     analysis=result, title=title, intensity=data.intensity, serious=data.serious or data.life_threatening,
+                     life_threatening=data.life_threatening, client_id=data.client_id)
     db.add(e)
-    e.description = data.description
+    e.description = words
     db.flush()
     return e, alerts.process(db, patient, f"ae:{e.id}", received_at)
 
@@ -196,15 +202,83 @@ def message_dict(m: Message) -> dict:
             "created_at": m.created_at, "read_at": m.read_at}
 
 
+DOSE_HORIZON_DAYS = 28  # план приёмов всегда на 4 недели вперёд (приверженность, напоминания)
+
+
+def _dose_hours(rx: Prescription) -> list[int]:
+    return {1: [9], 2: [8, 20], 3: [8, 14, 20]}.get(int((rx.regimen or {}).get("times_per_day") or 1), [9])
+
+
 def schedule_doses(db: Session, rx: Prescription, days: int = 42) -> None:
     """Плановые приёмы на курс — по ним считается приверженность."""
-    times = {1: [9], 2: [8, 20], 3: [8, 14, 20]}.get(int(rx.regimen.get("times_per_day", 1)), [9])
     start = rx.started_at.date()
     for d in range(days):
-        for h in times:
+        for h in _dose_hours(rx):
             t = datetime.combine(start + timedelta(days=d), datetime.min.time()) + timedelta(hours=h - 3)  # МСК -> UTC
             if t >= rx.started_at:
                 db.add(DoseLog(patient_id=rx.patient_id, prescription_id=rx.id, scheduled_for=t, status="pending"))
+
+
+def extend_dose_schedule(db: Session, rx: Prescription, horizon_days: int = DOSE_HORIZON_DAYS) -> int:
+    """Продлить план приёмов действующего назначения: терапия идёт, пока врач её не отменит."""
+    last = db.scalar(select(func.max(DoseLog.scheduled_for)).where(DoseLog.prescription_id == rx.id))
+    day = (last.date() + timedelta(days=1)) if last else rx.started_at.date()
+    until = (now() + timedelta(days=horizon_days)).date()
+    n = 0
+    while day <= until:
+        for h in _dose_hours(rx):
+            t = datetime.combine(day, datetime.min.time()) + timedelta(hours=h - 3)  # МСК -> UTC
+            if t >= rx.started_at:
+                db.add(DoseLog(patient_id=rx.patient_id, prescription_id=rx.id, scheduled_for=t, status="pending"))
+                n += 1
+        day += timedelta(days=1)
+    return n
+
+
+def _ics_text(s: str) -> str:
+    return s.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
+
+
+def dose_calendar(db: Session, patient: Patient) -> str | None:
+    """Календарь напоминаний (RFC 5545) по плановым приёмам действующего назначения.
+
+    Напоминает сам телефон пациента — без интернета и SMS. В тексте нет названия
+    препарата: календари часто синхронизируются с внешними облачными сервисами."""
+    rx = db.scalar(select(Prescription).where(Prescription.patient_id == patient.id, Prescription.status == "active")
+                   .order_by(Prescription.started_at.desc()))
+    if not rx:
+        return None
+    # Время приёмов — из режима (как в плане приёмов); горизонт совпадает с планом,
+    # который фоновая задача продлевает ежедневно. Без записи в БД.
+    t = now()
+    first_by_time: dict[str, datetime] = {}
+    for h in _dose_hours(rx):
+        start = datetime.combine(t.date(), datetime.min.time()) + timedelta(hours=h - 3)  # МСК -> UTC
+        if start < t:
+            start += timedelta(days=1)
+        first_by_time[start.strftime("%H%M")] = start
+    until = (t + timedelta(days=DOSE_HORIZON_DAYS)).strftime("%Y%m%dT%H%M%SZ")
+    stamp = now().strftime("%Y%m%dT%H%M%SZ")
+    lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Kompas//Dose reminders//RU", "CALSCALE:GREGORIAN", "METHOD:PUBLISH"]
+    for hhmm, start in sorted(first_by_time.items()):
+        lines += [
+            "BEGIN:VEVENT",
+            f"UID:kompas-rx{rx.id}-{hhmm}@kompas",
+            f"DTSTAMP:{stamp}",
+            f"DTSTART:{start.strftime('%Y%m%dT%H%M%SZ')}",
+            "DURATION:PT15M",
+            f"RRULE:FREQ=DAILY;UNTIL={until}",
+            f"SUMMARY:{_ics_text('Компас: приём лекарства')}",
+            f"DESCRIPTION:{_ics_text('Примите препарат по назначению врача и отметьте приём в приложении «Компас».')}",
+            "BEGIN:VALARM",
+            "ACTION:DISPLAY",
+            f"DESCRIPTION:{_ics_text('Время принять лекарство')}",
+            "TRIGGER:PT0M",
+            "END:VALARM",
+            "END:VEVENT",
+        ]
+    lines.append("END:VCALENDAR")
+    return "\r\n".join(lines) + "\r\n"
 
 
 def add_business_days(d: datetime, n: int) -> datetime:

@@ -5,6 +5,7 @@ import { useAction } from '../../../api/useApi'
 import { ErrorMessage } from '../../../components/ErrorMessage'
 import { formatDateTime, LEVEL_LABEL, SEVERITY_LABEL } from '../../../format'
 import { usePatient } from './PatientLayout'
+import { AdverseEventReview } from './AdverseEventReview'
 import { VisitsHistory } from './VisitsHistory'
 
 export function OverviewTab() {
@@ -12,7 +13,6 @@ export function OverviewTab() {
   const visit = useAction(() => api.post(`/api/doctor/patients/${id}/visit`))
   const monitoring = useAction((active: boolean) => api.post(`/api/doctor/patients/${id}/monitoring`, { active }))
   const resetPatientPassword = useAction(() => api.post<{ temporary_password: string }>(`/api/doctor/patients/${id}/reset-patient-password`))
-  const reviewAdverseEvent = useAction((eventId: number) => api.post(`/api/doctor/adverse-events/${eventId}/review`))
   const [temporaryPassword, setTemporaryPassword] = useState<string | null>(null)
 
   const openAlerts = card.alerts.filter((a) => a.status !== 'resolved')
@@ -40,15 +40,7 @@ export function OverviewTab() {
       <section aria-labelledby="adverse-events-h">
         <h2 id="adverse-events-h">Нежелательные реакции</h2>
         {card.adverse_events.length === 0 ? <p>Зарегистрированных нежелательных реакций нет.</p> : card.adverse_events.map((event) => (
-          <article key={event.id} className={`panel ${event.serious || event.life_threatening ? 'panel-critical' : ''}`}>
-            <div className="feature-card-heading"><strong>{event.title}</strong><span className={`badge ${event.life_threatening ? 'badge-critical' : event.serious ? 'badge-high' : 'badge-medium'}`}>{event.life_threatening ? 'Угроза жизни' : event.serious ? 'Серьёзная реакция' : event.intensity}</span></div>
-            <p className="muted small">{formatDateTime(event.created_at)} · {event.expected === null ? 'Ожидаемость не установлена' : event.expected ? 'Ожидаемая по инструкции' : 'Неожидаемая'}</p>
-            {event.description && <p>{event.description}</p>}
-            {event.status === 'reviewed' ? <p className="message" role="status">Врачебный разбор зафиксирован.</p> : <>
-              <ErrorMessage error={reviewAdverseEvent.error} />
-              <button type="button" className="secondary" disabled={reviewAdverseEvent.pending} onClick={async () => { if (window.confirm('Зафиксировать, что нежелательная реакция рассмотрена врачом?') && await reviewAdverseEvent.run(event.id)) reload() }}>Отметить как рассмотренную</button>
-            </>}
-          </article>
+          <AdverseEventReview key={event.id} event={event} onChange={reload} />
         ))}
       </section>
 

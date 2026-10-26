@@ -77,6 +77,22 @@ rules:
     actions: [notify_doctor, propose_hold_therapy, pharmacovigilance_draft, propose_visit]
     source: "Порядок фармаконадзора, приказ Росздравнадзора № 3518 (пп. 21–22); ▼ дополнительный мониторинг Авиандр"
 
+  - id: ae_red_flag_critical
+    severity: critical
+    title: Угрожающие признаки в сообщении о нежелательной реакции
+    when: { "==": [{ var: ae.red_flag_critical }, true] }
+    message: "Пациент описывает: {ae.red_flag_titles}"
+    actions: [notify_doctor, crisis_screen, { escalate: { after_min: thresholds.escalation_min } }, propose_hold_therapy, pharmacovigilance_draft]
+    source: "Инструкции по медицинскому применению (раздел «Побочное действие»); приказ Росздравнадзора № 3518, п. 21–22"
+
+  - id: ae_red_flag_high
+    severity: high
+    title: Тревожные признаки в сообщении о нежелательной реакции
+    when: { "==": [{ var: ae.red_flag_high }, true] }
+    message: "Пациент описывает: {ae.red_flag_titles}"
+    actions: [notify_doctor, propose_visit, pharmacovigilance_draft]
+    source: "Инструкции по медицинскому применению (раздел «Побочное действие»)"
+
   - id: adverse_event
     severity: medium
     title: Нежелательная реакция
