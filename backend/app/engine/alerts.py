@@ -97,13 +97,25 @@ def process(db: Session, patient: Patient, trigger_ref: str, received_at: dateti
     for alert in created:  # события — в той же транзакции, что и данные (transactional outbox)
         alert.pushed_at = t
         bus.enqueue(db, doctor_channel(alert.doctor_id), "alert", alert_event(alert))
+        push_alert(db, alert.doctor_id, alert, patient)
         if any(_action_name(a) == "crisis_screen" for a in alert.actions):
             bus.enqueue(db, patient_channel(patient.id), "crisis", {"alert_id": alert.id})
         if alert.severity == "critical":  # экстренное оповещение по политике клиники
             alert.notified = notify.route_critical(db, kb, alert, patient)
             if alert.escalated_to:  # вне рабочего времени — сразу дежурному
                 bus.enqueue(db, doctor_channel(alert.escalated_to), "alert", {**alert_event(alert), "escalated": True})
+                push_alert(db, alert.escalated_to, alert, patient, escalated=True)
     return created
+
+
+PUSH_LEVEL = {"critical": "критическое", "high": "высокий уровень", "medium": "средний уровень"}
+
+
+def push_alert(db: Session, user_id: int, alert: Alert, patient: Patient, escalated: bool = False) -> None:
+    """Push врачу — даже если кабинет закрыт. Только уровень и код пациента, без сведений о состоянии."""
+    notify.enqueue_push(db, user_id, "Компас: " + ("передано дежурному" if escalated else "новое оповещение"),
+                        f"{PUSH_LEVEL.get(alert.severity, alert.severity).capitalize()} · пациент {patient.code}",
+                        "/doctor/alerts", f"alert-{alert.id}", "high" if alert.severity == "critical" else "normal")
 
 
 def commit(db: Session) -> None:

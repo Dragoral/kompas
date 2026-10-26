@@ -1,7 +1,8 @@
 import QRCode from 'qrcode'
-import { useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, setToken } from '../api/client'
+import { disablePush, enablePush, pushState, type PushState } from '../api/push'
 import { useAction } from '../api/useApi'
 import { useAuth } from '../auth/AuthContext'
 import { ErrorMessage } from '../components/ErrorMessage'
@@ -17,6 +18,7 @@ export function AccountPage() {
         {user.role !== 'patient' && <><dt>ФИО</dt><dd>{user.full_name}</dd></>}
         <dt>Второй фактор</dt><dd>{user.mfa_enabled ? 'Подключён' : 'Не подключён'}</dd>
       </dl>
+      <PushSettings role={user.role} />
       <PasswordForm />
       {!user.mfa_enabled && <MfaSetup />}
     </>
@@ -124,6 +126,62 @@ function MfaSetup() {
           <ErrorMessage error={confirm.error} />
           <button type="submit" disabled={confirm.pending}>Подтвердить</button>
         </form>
+      )}
+    </section>
+  )
+}
+
+const PUSH_WHAT: Record<string, string> = {
+  patient: 'время приёма лекарства, опросник на сегодня, дневник, новое сообщение от врача',
+  doctor: 'новые оповещения по вашим пациентам, в том числе когда кабинет закрыт',
+  admin: 'служебные уведомления',
+}
+
+function PushSettings({ role }: { role: string }) {
+  const [state, setState] = useState<PushState | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [pending, setPending] = useState(false)
+  const refresh = useCallback(() => { pushState().then(setState).catch(() => setState('unsupported')) }, [])
+
+  useEffect(refresh, [refresh])
+
+  const run = async (fn: () => Promise<unknown>, done: string) => {
+    setPending(true)
+    setError(null)
+    setNotice(null)
+    try {
+      await fn()
+      setNotice(done)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setPending(false)
+      refresh()
+    }
+  }
+
+  return (
+    <section aria-labelledby="push-h">
+      <h2 id="push-h">Уведомления на этом устройстве</h2>
+      <p>Что приходит: {PUSH_WHAT[role] ?? PUSH_WHAT.admin}. В тексте уведомления нет диагнозов и названий препаратов.</p>
+      {state === null && <p className="muted">Проверка…</p>}
+      {state === 'unsupported' && <p className="message">Этот браузер не поддерживает push-уведомления.</p>}
+      {state === 'ios-install' && (
+        <p className="message">На iPhone уведомления работают в приложении: нажмите «Поделиться» → «На экран „Домой“», откройте «Компас» с экрана и включите уведомления здесь (iOS 16.4 и новее).</p>
+      )}
+      {state === 'denied' && <p className="message message-error">Уведомления запрещены в настройках браузера для этого сайта. Разрешите их и обновите страницу.</p>}
+      {error && <p className="message message-error" role="alert">{error}</p>}
+      {notice && <p className="message" role="status">{notice}</p>}
+      {state === 'off' && (
+        <button type="button" disabled={pending} onClick={() => run(enablePush, 'Уведомления включены.')}>Включить уведомления</button>
+      )}
+      {state === 'on' && (
+        <div className="row">
+          <button type="button" className="secondary" disabled={pending}
+                  onClick={() => run(() => api.post('/api/push/test'), 'Тестовое уведомление отправлено — придёт в течение нескольких секунд.')}>Проверить</button>
+          <button type="button" className="secondary" disabled={pending} onClick={() => run(disablePush, 'Уведомления отключены.')}>Отключить</button>
+        </div>
       )}
     </section>
   )

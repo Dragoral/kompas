@@ -32,6 +32,8 @@ services:
       DEMO_PASSWORD: ${DEMO_PASSWORD:?задайте DEMO_PASSWORD в .env}
       WORKERS: ${WORKERS:-4}
       NOTIFY_PROVIDER: ${NOTIFY_PROVIDER:-log}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@example.org}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       CORS_ORIGINS: ${CORS_ORIGINS:?задайте CORS_ORIGINS в .env}
       APP_ENV: ${APP_ENV:-production}
       REQUIRE_MFA: ${REQUIRE_MFA:-1}

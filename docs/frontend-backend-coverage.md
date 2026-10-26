@@ -13,6 +13,7 @@
 | `GET /api/auth/me` | `auth/AuthContext.tsx` | Восстановление сессии, MFA и признака `is_reviewer` |
 | `POST /api/auth/password` | `pages/AccountPage.tsx` | Смена пароля с повторным входом |
 | `POST /api/auth/mfa/setup`, `POST /api/auth/mfa/confirm` | `pages/AccountPage.tsx` | Настройка TOTP, QR-код и подтверждение подключения |
+| `GET /api/push/key`, `GET/POST/DELETE /api/push/subscriptions`, `POST /api/push/test` | `pages/AccountPage.tsx`, `api/push.ts` | Включение и отключение push-уведомлений на устройстве, проверка доставки |
 | `POST /api/auth/stream-ticket` | `api/stream.ts` | Одноразовый билет для SSE, чтобы не помещать bearer-токен в URL |
 
 ## Врач: пациенты и клинические решения
@@ -66,6 +67,7 @@
 | `POST /api/me/sync` | `components/PatientOfflineSyncPanel.tsx` | Идемпотентная пакетная синхронизация офлайн-очереди; показываются результаты и неудачные элементы |
 | `GET /api/me/history` | `pages/patient/HistoryPage.tsx` | История шкал, дневника, реакций и приёмов |
 | `GET /api/me/export` | `pages/patient/MyDataPage.tsx` | Выгрузка собственных данных в JSON |
+| `GET /api/me/doses.ics` | `pages/patient/HomePage.tsx` | Напоминания о приёме препарата для календаря телефона (iCalendar) |
 | `GET /api/me/stream` | `api/stream.ts`, `components/Layout.tsx` | Живые кризисные сигналы, изменения терапии и направления |
 
 ## Справочники и клинические знания

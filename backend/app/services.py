@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from . import notify
 from .bus import doctor_channel, patient_channel
 from .engine import adverse, alerts, knowledge, scales
 from .models import AdverseEvent, DiaryEntry, DoseLog, Message, Patient, Prescription, ScaleAssignment, ScaleResult, User, now
@@ -217,6 +218,8 @@ def send_message(db: Session, patient: Patient, user: User, data: MessageIn, rec
     ev = {"id": m.id, "patient_id": patient.id, "sender_role": m.sender_role}
     alerts.emit(db, patient_channel(patient.id), "message", ev)
     alerts.emit(db, doctor_channel(patient.doctor_id), "message", ev)
+    if user.role != "patient":
+        notify.enqueue_push(db, patient.user_id, "Компас", "Новое сообщение от врача", "/me/messages", "message")
     return m, new_alerts
 
 

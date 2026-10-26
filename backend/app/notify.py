@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 from datetime import datetime, timedelta
@@ -21,7 +22,8 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import Notification, TrustedContact, User, now
+from . import webpush
+from .models import Notification, PushSubscription, TrustedContact, User, now
 from .observability import report_problem
 
 log = logging.getLogger("kompas.notify")
@@ -130,10 +132,60 @@ def _send_smsru(phone: str | None, text: str) -> str:
 PROVIDERS = {"log": _send_log, "smsru": _send_smsru}
 
 
+def enqueue_push(db: Session, user_id: int | None, title: str, body: str, url: str, tag: str,
+                 urgency: str = "normal") -> bool:
+    """Push-уведомление пользователю, если он подключил уведомления на каком-либо устройстве.
+    Текст — без медицинских сведений: его видно на экране блокировки."""
+    if not user_id or not db.scalar(select(PushSubscription.id).where(PushSubscription.user_id == user_id).limit(1)):
+        return False
+    payload = json.dumps({"title": title, "body": body, "url": url, "tag": tag, "urgency": urgency}, ensure_ascii=False)
+    db.add(Notification(user_id=user_id, channel="push", reason=tag.split("-")[0], text=payload[:320]))
+    return True
+
+
+def _send_push(db: Session, nt: Notification) -> str:
+    """Доставить на все устройства пользователя; недействительные подписки удаляются."""
+    payload = json.loads(nt.text)
+    subs = db.scalars(select(PushSubscription).where(PushSubscription.user_id == nt.user_id)).all()
+    if not subs:
+        raise webpush.Gone("у пользователя нет подписок")
+    delivered, errors = 0, []
+    for sub in subs:
+        try:
+            webpush.send(sub.endpoint, sub.p256dh, sub.auth, payload, urgency=payload.get("urgency", "normal"),
+                         ttl=24 * 3600, topic=payload.get("tag", "")[:32] or None)
+            sub.last_success_at = now()
+            delivered += 1
+        except webpush.Gone:
+            db.delete(sub)
+        except Exception as e:  # сеть, ответ push-сервиса
+            errors.append(str(e)[:120])
+    if not delivered and not errors:
+        raise webpush.Gone("все подписки пользователя недействительны")
+    if not delivered:
+        raise RuntimeError("; ".join(errors))
+    return f"{delivered} устр."
+
+
 def send_pending(db: Session) -> int:
     sender = PROVIDERS.get(PROVIDER, _send_log)
     n = 0
     for nt in db.scalars(select(Notification).where(Notification.status == "pending").order_by(Notification.id).limit(100)):
+        if nt.channel == "push":
+            nt.attempts += 1
+            nt.provider = "webpush"
+            try:
+                nt.provider_id = _send_push(db, nt)
+                nt.status, nt.sent_at, nt.last_error = "sent", now(), None
+                n += 1
+            except webpush.Gone as e:
+                nt.status, nt.last_error = "failed", str(e)[:250]
+            except Exception as e:
+                nt.last_error = str(e)[:250]
+                if nt.attempts >= MAX_ATTEMPTS:
+                    nt.status = "failed"
+            db.commit()
+            continue
         if nt.user_id:
             u = db.get(User, nt.user_id)
             phone = u.phone if u and u.active else None

@@ -50,3 +50,27 @@ self.addEventListener('fetch', (event) => {
     })());
   }
 });
+
+/* Web Push: show the notification and open the related page on click. Payload carries no medical details. */
+self.addEventListener('push', (event) => {
+  let data = { title: 'Компас', body: 'Откройте приложение', url: '/', tag: 'kompas' };
+  try { if (event.data) data = { ...data, ...event.data.json() }; } catch { /* keep defaults */ }
+  event.waitUntil(self.registration.showNotification(data.title, {
+    body: data.body,
+    tag: data.tag,
+    icon: '/kompas-icon.svg',
+    badge: '/kompas-icon.svg',
+    data: { url: data.url },
+    requireInteraction: data.urgency === 'high',
+  }));
+});
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = new URL(event.notification.data?.url || '/', self.location.origin).href;
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const same = windows.find((w) => w.url === target) || windows.find((w) => new URL(w.url).origin === self.location.origin);
+    if (same) { await same.focus(); if (same.url !== target && 'navigate' in same) await same.navigate(target); return; }
+    await self.clients.openWindow(target);
+  })());
+});

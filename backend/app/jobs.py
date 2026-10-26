@@ -12,7 +12,7 @@ import time
 import uuid
 from datetime import timedelta
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from . import auth, backup, bus as bus_mod, notify, observability, services
@@ -21,7 +21,8 @@ from .config import BASE_DIR, ESCALATION_CHECK_SEC
 from .crypto import vault
 from .db import IS_SQLITE, SessionLocal, WriteSession
 from .engine import alerts, knowledge
-from .models import Alert, Event, Lease, Message, Patient, Prescription, StreamTicket, User, now
+from .models import (Alert, DiaryEntry, DoseLog, Event, Lease, Message, Patient, Prescription, ScaleAssignment,
+                     StreamTicket, User, now)
 
 log = logging.getLogger("kompas.jobs")
 RETENTION_MESSAGES_DAYS = 365  # сопутствующие материалы — 1 год (193н п. 51)
@@ -66,6 +67,7 @@ def escalation() -> int:
             auth.audit(db, None, "alert_escalated", "alert", a.id, patient_id=a.patient_id, to_user=duty.id)
             bus_mod.enqueue(db, doctor_channel(duty.id), "alert", {**alerts.alert_event(a), "escalated": True})
             notify.enqueue_escalation(db, kb, a, db.get(Patient, a.patient_id), duty)
+            alerts.push_alert(db, duty.id, a, db.get(Patient, a.patient_id), escalated=True)
             a.notified = (a.notified or []) + ["дежурная служба (нет подтверждения от лечащего врача)"]
             db.commit()
             n += 1
@@ -101,6 +103,49 @@ def maintenance() -> None:
 def notifications() -> None:
     with WriteSession() as db:
         notify.send_pending(db)
+
+
+REMINDER_DEFAULTS = {"dose_window_min": 15, "scales_at": "10:00", "diary_at": "20:00", "quiet_after": "22:00"}
+
+
+def reminders() -> int:
+    """Push-напоминания пациентам на дистанционном наблюдении: приём препарата, шкалы на сегодня,
+    дневник. Каждое — не чаще одного раза (отметка в БД), только при действующем согласии."""
+    n = 0
+    with WriteSession() as db:
+        kb = knowledge.get(db)
+        cfg = {**REMINDER_DEFAULTS, **(kb["dictionary"].get("monitoring_plan", {}).get("reminders") or {})}
+        local = notify.local_time(notify.policy(kb))
+        hm, today, t = local.strftime("%H:%M"), local.date(), now()
+        eligible = select(Patient.id).where(Patient.monitoring_active.is_(True), Patient.erased_at.is_(None),
+                                            Patient.consent_at.is_not(None), Patient.consent_withdrawn_at.is_(None))
+        doses = db.scalars(select(DoseLog).join(Prescription, Prescription.id == DoseLog.prescription_id).where(
+            DoseLog.status == "pending", DoseLog.reminded_at.is_(None), Prescription.status == "active",
+            DoseLog.scheduled_for <= t, DoseLog.scheduled_for >= t - timedelta(minutes=int(cfg["dose_window_min"])),
+            DoseLog.patient_id.in_(eligible))).all()
+        for d in doses:
+            d.reminded_at = t
+            n += notify.enqueue_push(db, db.get(Patient, d.patient_id).user_id, "Компас", "Время принять лекарство",
+                                     "/me", f"dose-{d.id}", "high")
+        if cfg["scales_at"] <= hm < cfg["quiet_after"]:
+            due: dict[int, list[ScaleAssignment]] = {}
+            for a in db.scalars(select(ScaleAssignment).where(
+                    ScaleAssignment.active.is_(True), ScaleAssignment.next_due <= today, ScaleAssignment.patient_id.in_(eligible),
+                    or_(ScaleAssignment.reminded_on.is_(None), ScaleAssignment.reminded_on < today))):
+                due.setdefault(a.patient_id, []).append(a)
+            for pid, items in due.items():
+                for a in items:
+                    a.reminded_on = today
+                n += notify.enqueue_push(db, db.get(Patient, pid).user_id, "Компас", "Пора заполнить опросник на сегодня",
+                                         "/me", "scales")
+        if cfg["diary_at"] <= hm < cfg["quiet_after"]:
+            done = select(DiaryEntry.patient_id).where(DiaryEntry.day == today)
+            for p in db.scalars(select(Patient).where(Patient.id.in_(eligible), Patient.id.not_in(done),
+                                                      or_(Patient.diary_reminded_on.is_(None), Patient.diary_reminded_on < today))):
+                p.diary_reminded_on = today
+                n += notify.enqueue_push(db, p.user_id, "Компас", "Отметьте самочувствие в дневнике", "/me/diary", "diary")
+        db.commit()
+    return n
 
 
 def backups() -> None:
@@ -142,6 +187,7 @@ SCHEDULE = {
     "escalation": (escalation, ESCALATION_CHECK_SEC),
     "maintenance": (maintenance, 60),
     "notifications": (notifications, 5),
+    "reminders": (reminders, 60),
     "backups": (backups, int(os.getenv("BACKUP_INTERVAL_MIN", "15")) * 60),
     "backup_drill": (backup_drill, int(os.getenv("BACKUP_DRILL_INTERVAL_HOURS", "168")) * 3600),
 }

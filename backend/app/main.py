@@ -14,7 +14,7 @@ from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
 from . import errors, jobs, observability
-from .api import admin, analytics, doctor, knowledge as knowledge_api, metrics, patient, system
+from .api import admin, analytics, doctor, knowledge as knowledge_api, metrics, patient, push, system
 from .api import auth as auth_api
 from .bus import bus
 from .config import APP_ENV, CORS_ORIGINS, DOCS_ENABLED, LOG_DIR, LOG_LEVEL, MAX_BODY_BYTES, production_problems
@@ -43,6 +43,10 @@ async def lifespan(app: FastAPI):
         user_columns = {col["name"] for col in inspect(conn).get_columns("users")}
         if "totp_last_step" not in user_columns:
             conn.exec_driver_sql("ALTER TABLE users ADD COLUMN totp_last_step BIGINT")
+        for table, column, ddl in (("dose_logs", "reminded_at", "TIMESTAMP"), ("scale_assignments", "reminded_on", "DATE"),
+                                   ("patients", "diary_reminded_on", "DATE")):
+            if column not in {col["name"] for col in inspect(conn).get_columns(table)}:
+                conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
         if "analysis" not in {col["name"] for col in inspect(conn).get_columns("adverse_events")}:
             conn.exec_driver_sql("ALTER TABLE adverse_events ADD COLUMN analysis JSON")
         if "resolved_at" not in {col["name"] for col in inspect(conn).get_columns("alerts")}:
@@ -137,5 +141,5 @@ async def request_context(request: Request, call_next):
 
 
 for r in (system.router, auth_api.router, patient.router, doctor.router, knowledge_api.router, admin.router, admin.review,
-          analytics.router, metrics.router):
+          analytics.router, metrics.router, push.router):
     app.include_router(r)

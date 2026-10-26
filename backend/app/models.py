@@ -159,6 +159,7 @@ class Patient(Base):
     in_person_visit_at: Mapped[datetime | None] = mapped_column(DateTime)
     diagnosis_confirmed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     monitoring_active: Mapped[bool] = mapped_column(Boolean, default=False)
+    diary_reminded_on: Mapped[date | None] = mapped_column(Date)  # push-напоминание о дневнике отправлено в этот день
 
     # Согласие на обработку ПДн — отдельный документ (152-ФЗ ст. 9 ред. 156-ФЗ, ст. 10)
     consent_version: Mapped[str | None] = mapped_column(String(16))
@@ -240,6 +241,7 @@ class ScaleAssignment(Base):
     scale_code: Mapped[str] = mapped_column(String(32))
     every_days: Mapped[int | None] = mapped_column(Integer)  # None — разово
     next_due: Mapped[date] = mapped_column(Date)
+    reminded_on: Mapped[date | None] = mapped_column(Date)  # push-напоминание о шкале отправлено в этот день
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     reason: Mapped[str | None] = mapped_column(String(256))
 
@@ -270,6 +272,7 @@ class DoseLog(Base):
     status: Mapped[str] = mapped_column(String(16))  # pending | taken | skipped
     taken_at: Mapped[datetime | None] = mapped_column(DateTime)
     client_id: Mapped[str | None] = mapped_column(String(64))
+    reminded_at: Mapped[datetime | None] = mapped_column(DateTime)  # push-напоминание о приёме отправлено
 
 
 class AdverseEvent(Base):
@@ -467,6 +470,20 @@ class Visit(Base):
     next_visit_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
+class PushSubscription(Base):
+    """Подписка браузера/установленного приложения на Web Push (RFC 8030). Создаётся по явному
+    действию пользователя; ключи шифрования содержимого — от браузера (RFC 8291)."""
+    __tablename__ = "push_subscriptions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    endpoint: Mapped[str] = mapped_column(String(1024), unique=True)
+    p256dh: Mapped[str] = mapped_column(String(128))
+    auth: Mapped[str] = mapped_column(String(64))
+    user_agent: Mapped[str | None] = mapped_column(String(256))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
 class Notification(Base):
     """Внешние уведомления (SMS/звонок) по критическим алертам. Документирование
     отправки и доставки — 193н п. 46 «д». Текст без медицинских сведений (3185-1 ст. 9)."""
@@ -475,7 +492,7 @@ class Notification(Base):
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
     trusted_contact_id: Mapped[int | None] = mapped_column(ForeignKey("trusted_contacts.id"))
     alert_id: Mapped[int | None] = mapped_column(ForeignKey("alerts.id"), index=True)
-    channel: Mapped[str] = mapped_column(String(16))  # sms | call
+    channel: Mapped[str] = mapped_column(String(16))  # sms | call | push
     reason: Mapped[str | None] = mapped_column(String(64))  # attending | duty | escalation | trusted_contact
     text: Mapped[str] = mapped_column(String(320))
     status: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending | sent | failed
