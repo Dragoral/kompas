@@ -60,12 +60,18 @@ def _checks(db: Session) -> dict:
 
 @router.get("/api/ready")
 def ready(db: Session = Depends(get_db)):
+    """Публичный readiness probe без раскрытия внутренней диагностики.
+
+    Подробности проверок, ошибки фоновых задач и сведения о компонентах доступны
+    только через защищённый /api/admin/system.
+    """
     checks = _checks(db)
     ok = all(c.get("ok") for c in checks.values())
     if not ok:
-        return errors.problem(503, "Сервис не готов: " + ", ".join(k for k, c in checks.items() if not c.get("ok")),
-                              extra={"checks": checks})
-    return {"status": "ready", "checks": checks}
+        # Не передавать имена внутренних компонентов и тексты ошибок наружу.
+        # Оркестратору достаточно HTTP 503, администратор увидит детали в system.
+        return errors.problem(503, "Сервис временно не готов")
+    return {"status": "ready"}
 
 
 @router.get("/api/admin/system")

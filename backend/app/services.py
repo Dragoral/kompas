@@ -8,10 +8,10 @@
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -25,6 +25,13 @@ class ScaleIn(BaseModel):
     answers: dict[str, float]
     client_id: str | None = Field(None, max_length=64)
     taken_at: datetime | None = None  # время заполнения на устройстве (офлайн)
+
+    @field_validator("taken_at")
+    @classmethod
+    def _normalise_taken_at(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is not None:
+            return value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value  # naive input is interpreted as UTC by the API contract
 
 
 class DiaryIn(BaseModel):
@@ -43,6 +50,13 @@ class DoseIn(BaseModel):
     status: str = Field("taken", pattern="^(taken|skipped)$")
     taken_at: datetime | None = None
     client_id: str | None = Field(None, max_length=64)
+
+    @field_validator("taken_at")
+    @classmethod
+    def _normalise_taken_at(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is not None:
+            return value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value
 
 
 class AdverseIn(BaseModel):

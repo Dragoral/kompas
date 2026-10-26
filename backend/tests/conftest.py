@@ -9,6 +9,7 @@ _tmp = Path(tempfile.mkdtemp(prefix="kompas-test-"))
 # TEST_DATABASE_URL — прогон на PostgreSQL (в контейнере); по умолчанию — временная SQLite
 os.environ["DATABASE_URL"] = os.getenv("TEST_DATABASE_URL") or f"sqlite:///{(_tmp / 'test.db').as_posix()}"
 os.environ["MASTER_KEY_FILE"] = str(_tmp / "master.key")
+os.environ["KOMPAS_DISABLE_BACKGROUND_JOBS"] = "1"
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi.testclient import TestClient  # noqa: E402

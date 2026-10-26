@@ -1,8 +1,14 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
+import type { ReactNode } from 'react'
 import { useAuth } from './auth/AuthContext'
 import { Layout } from './components/Layout'
 import { homePath, RequireRole } from './components/RequireRole'
 import { AccountPage } from './pages/AccountPage'
+import { AboutPage } from './pages/AboutPage'
+import { AnalyticsPage } from './pages/AnalyticsPage'
+import { MetricsPage } from './pages/admin/MetricsPage'
+import { ClinicalActionsPage } from './pages/doctor/ClinicalActionsPage'
+import { RequireReviewerOrAdmin } from './components/RequireReviewerOrAdmin'
 import { AuditPage } from './pages/admin/AuditPage'
 import { PatientsAdminPage } from './pages/admin/PatientsAdminPage'
 import { SystemPage } from './pages/admin/SystemPage'
@@ -38,6 +44,13 @@ import { MyDataPage } from './pages/patient/MyDataPage'
 import { ScalePage } from './pages/patient/ScalePage'
 import { TrustedContactsPage } from './pages/patient/TrustedContactsPage'
 
+function ReviewerOnly({ children }: { children: ReactNode }) {
+  const { user, loading } = useAuth()
+  if (loading) return <p className="container muted">Загрузка…</p>
+  if (!user || user.role !== 'doctor' || !user.is_reviewer) return <Navigate to={user ? homePath(user.role) : '/login'} replace />
+  return <>{children}</>
+}
+
 function Home() {
   const { user, loading } = useAuth()
   if (loading) return null
@@ -49,6 +62,7 @@ export function App() {
     <Routes>
       <Route path="/" element={<Home />} />
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/about" element={<AboutPage />} />
 
       <Route element={<RequireRole roles={['doctor', 'patient', 'admin']}><Layout /></RequireRole>}>
         <Route path="/account" element={<AccountPage />} />
@@ -67,7 +81,8 @@ export function App() {
         </Route>
         <Route path="/doctor/patients/:id/scales/:code" element={<ClinicianScalePage />} />
         <Route path="/doctor/alerts" element={<AlertsPage />} />
-        <Route path="/knowledge/review" element={<ReviewPage />} />
+        <Route path="/doctor/actions" element={<ClinicalActionsPage />} />
+        <Route path="/knowledge/review" element={<ReviewerOnly><ReviewPage /></ReviewerOnly>} />
       </Route>
 
       <Route element={<RequireRole roles={['patient']}><Layout /></RequireRole>}>
@@ -82,6 +97,7 @@ export function App() {
       </Route>
 
       <Route element={<RequireRole roles={['doctor', 'admin']}><Layout /></RequireRole>}>
+        <Route path="/analytics" element={<RequireReviewerOrAdmin><AnalyticsPage /></RequireReviewerOrAdmin>} />
         <Route path="/knowledge" element={<KnowledgePage />} />
         <Route path="/knowledge/import" element={<ImportScalePage />} />
         <Route path="/knowledge/scales/new" element={<ScaleEditorPage />} />
@@ -95,6 +111,7 @@ export function App() {
 
       <Route element={<RequireRole roles={['admin']}><Layout /></RequireRole>}>
         <Route path="/admin/system" element={<SystemPage />} />
+        <Route path="/admin/metrics" element={<MetricsPage />} />
         <Route path="/admin/users" element={<UsersPage />} />
         <Route path="/admin/audit" element={<AuditPage />} />
         <Route path="/admin/patients" element={<PatientsAdminPage />} />

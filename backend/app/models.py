@@ -77,11 +77,13 @@ class User(Base):
     # Рабочие часы для экстренных уведомлений: {"days": [1..7], "start": "09:00", "end": "18:00"}; None — по политике клиники
     working_hours: Mapped[dict | None] = mapped_column(JSON)
     totp_secret_enc: Mapped[str | None] = mapped_column(Text)  # 2FA, зашифрован ключом приложения
+    totp_last_step: Mapped[int | None] = mapped_column(Integer)  # исключает повтор кода в том же временном окне
     phone_enc: Mapped[str | None] = mapped_column(Text)  # для экстренных SMS, зашифрован ключом приложения
     failed_logins: Mapped[int] = mapped_column(Integer, default=0)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime)
     password_changed_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
     @property
@@ -177,6 +179,22 @@ class Patient(Base):
     @birth_date.setter
     def birth_date(self, v: date):
         self._birth_date = v.isoformat()
+
+
+class PatientReassignmentRequest(Base):
+    """Two-person control for reassignment of a patient's treating doctor."""
+    __tablename__ = "patient_reassignment_requests"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    patient_id: Mapped[int] = mapped_column(ForeignKey("patients.id"), index=True)
+    from_doctor_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    to_doctor_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    requested_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    reason: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    decided_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    decision_comment: Mapped[str | None] = mapped_column(String(1000))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
 class Prescription(Base):

@@ -20,8 +20,11 @@ class LoginIn(BaseModel):
 
 
 def user_dict(u: User) -> dict:
+    mfa_enabled = bool(u.totp_secret_enc)
     return {"id": u.id, "login": u.login, "role": u.role, "full_name": u.full_name, "specialty": u.specialty,
-            "is_duty": u.is_duty, "mfa_enabled": bool(u.totp_secret_enc)}
+            "is_duty": u.is_duty, "is_reviewer": bool(getattr(u, "is_reviewer", False)), "mfa_enabled": mfa_enabled,
+            "mfa_setup_required": bool(auth.REQUIRE_MFA and u.role in ("doctor", "admin") and not mfa_enabled),
+            "must_change_password": u.must_change_password}
 
 
 @router.post("/login")
@@ -47,11 +50,16 @@ def login(data: LoginIn, request: Request, db: Session = Depends(get_db)):
 
     mfa = False
     if user.totp_secret_enc:
-        if not auth.totp_ok(user, data.totp):
-            raise HTTPException(401, "Введите код из приложения-аутентификатора")
+        if not auth.totp_ok(user, data.totp, db):
+            user.failed_logins += 1
+            if user.failed_logins >= auth.MAX_FAILED:
+                user.locked_until, user.failed_logins = t + auth.LOCKOUT, 0
+            auth.audit(db, user, "login_totp_failed", "user", user.id, ip=ip)
+            db.commit()
+            raise HTTPException(401, "Неверный или уже использованный код приложения-аутентификатора")
         mfa = True
-    elif auth.REQUIRE_MFA and user.role in ("doctor", "admin"):
-        raise HTTPException(403, "Для врача требуется подключить второй фактор")
+    # If MFA is required but not enrolled yet, issue an mfa_passed=False session.
+    # auth.current_user restricts it to account/password/MFA-enrollment endpoints.
 
     user.failed_logins, user.locked_until = 0, None
     token = auth.create_session(db, user, request, mfa)
@@ -84,7 +92,7 @@ def change_password(data: PasswordIn, request: Request, user: User = Depends(aut
     if not auth.verify_password(data.old_password, user.password_hash):
         raise HTTPException(401, "Неверный текущий пароль")
     auth.check_password_policy(data.new_password, user.login)
-    user.password_hash, user.password_changed_at = auth.hash_password(data.new_password), now()
+    user.password_hash, user.password_changed_at, user.must_change_password = auth.hash_password(data.new_password), now(), False
     auth.revoke_all(db, user.id)  # выход на всех устройствах
     auth.audit(db, user, "password_changed", "user", user.id, ip=auth.client_ip(request))
     db.commit()
@@ -101,14 +109,19 @@ def mfa_setup(user: User = Depends(auth.current_user)):
 class MfaConfirmIn(BaseModel):
     secret: str = Field(min_length=16, max_length=64)
     code: str = Field(min_length=6, max_length=8)
+    old_password: str = Field(min_length=1, max_length=256)
 
 
 @router.post("/mfa/confirm")
 def mfa_confirm(data: MfaConfirmIn, user: User = Depends(auth.current_user), db: Session = Depends(get_db)):
-    if not pyotp.TOTP(data.secret).verify(data.code, valid_window=1):
-        raise HTTPException(422, "Неверный код")
     user = db.merge(user)
+    if not auth.verify_password(data.old_password, user.password_hash):
+        raise HTTPException(401, "Для подключения второго фактора введите текущий пароль")
+    step = auth.valid_totp_setup(data.secret, data.code)
+    if step is None:
+        raise HTTPException(422, "Неверный или уже использованный код")
     user.totp_secret = data.secret
+    user.totp_last_step = step
     auth.audit(db, user, "mfa_enabled", "user", user.id)
     db.commit()
     return {"ok": True}

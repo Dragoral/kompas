@@ -29,18 +29,18 @@ export function ItemsEditor({ items, weighted, onChange }: {
     onChange(items.map((it) => ((it.type ?? 'choice') === 'choice' ? { ...it, options } : it)))
 
   return (
-    <>
+    <div className="items-editor">
       {items.map((it, i) => {
         const type = it.type ?? 'choice'
         return (
-          <fieldset key={i} className="item-editor">
-            <legend>Вопрос {it.n}</legend>
+          <div key={i} className="item-editor panel">
+            <h3 className="item-editor-title">Вопрос {it.n}</h3>
             <label>
               Текст
               <textarea rows={2} required value={it.text} onChange={(e) => update(i, { text: e.target.value })} />
             </label>
-            <div className="row">
-              <label>
+            <div className="row form-row-aligned">
+              <label className="field-block">
                 Тип ответа
                 <select value={type} onChange={(e) => {
                   const t = e.target.value as ItemType
@@ -53,40 +53,45 @@ export function ItemsEditor({ items, weighted, onChange }: {
               </label>
               {type === 'number' && (
                 <>
-                  <label>Минимум<NumberInput value={it.min} onChange={(v) => update(i, { min: v })} /></label>
-                  <label>Максимум<NumberInput value={it.max} onChange={(v) => update(i, { max: v })} /></label>
+                  <label className="field-block">Минимум<NumberInput value={it.min} onChange={(v) => update(i, { min: v })} /></label>
+                  <label className="field-block">Максимум<NumberInput value={it.max} onChange={(v) => update(i, { max: v })} /></label>
                 </>
               )}
-              {weighted && <label>Вес<NumberInput value={it.weight} onChange={(v) => update(i, { weight: v })} /></label>}
+              {weighted && (
+                <label className="field-block">Вес<NumberInput value={it.weight} onChange={(v) => update(i, { weight: v })} /></label>
+              )}
             </div>
             {type !== 'number' && (
-              <OptionsEditor options={it.options ?? []} onChange={(options) => update(i, { options })}
-                             onApplyAll={type === 'choice' && items.length > 1 ? () => applyOptionsToAll(it.options ?? []) : undefined} />
+              <OptionsEditor
+                options={it.options ?? []}
+                onChange={(options) => update(i, { options })}
+                onApplyAll={type === 'choice' && items.length > 1 ? () => applyOptionsToAll(it.options ?? []) : undefined}
+              />
             )}
-            <div className="row">
+            <div className="item-flag-row">
               <label className="checkbox">
                 <input type="checkbox" checked={!!it.reverse} onChange={(e) => update(i, { reverse: e.target.checked })} />
-                Обратный подсчёт
+                <span>Обратный подсчёт</span>
               </label>
               <label className="checkbox">
                 <input type="checkbox" checked={!!it.critical} onChange={(e) => update(i, { critical: e.target.checked })} />
-                Критический пункт
+                <span>Критический пункт</span>
               </label>
               <label className="checkbox">
                 <input type="checkbox" checked={it.required !== false} onChange={(e) => update(i, { required: e.target.checked })} />
-                Обязательный
+                <span>Обязательный</span>
               </label>
             </div>
-            <div className="row">
+            <div className="actions item-move-row">
               <button type="button" className="secondary" disabled={i === 0} onClick={() => move(i, -1)}>Выше</button>
               <button type="button" className="secondary" disabled={i === items.length - 1} onClick={() => move(i, 1)}>Ниже</button>
               <button type="button" className="secondary danger" disabled={items.length === 1} onClick={() => remove(i)}>Удалить вопрос</button>
             </div>
-          </fieldset>
+          </div>
         )
       })}
       <button type="button" onClick={add}>Добавить вопрос</button>
-    </>
+    </div>
   )
 }
 
@@ -102,36 +107,37 @@ function OptionsEditor({ options, onChange, onApplyAll }: {
   }
 
   return (
-    <table className="compact">
-      <caption>Варианты ответа</caption>
-      <thead>
-        <tr><th scope="col">Балл</th><th scope="col">Текст варианта</th><th scope="col"><span className="visually-hidden">Удалить</span></th></tr>
-      </thead>
-      <tbody>
+    <div className="options-editor">
+      <div className="options-editor-title">Варианты ответа</div>
+      <div className="line-editor">
         {options.map((o, i) => (
-          <tr key={i}>
-            <td className="col-number">
+          <div key={i} className="line-editor-row">
+            <label className="line-field line-field-score">
+              <span className="line-field-label">Балл</span>
               <NumberInput value={o.value} required aria-label={`Балл варианта ${i + 1}`} onChange={(v) => update(i, { value: v ?? 0 })} />
-            </td>
-            <td>
+            </label>
+            <label className="line-field line-field-grow">
+              <span className="line-field-label">Текст варианта</span>
               <input required value={o.label} aria-label={`Текст варианта ${i + 1}`} onChange={(e) => update(i, { label: e.target.value })} />
-            </td>
-            <td>
-              <button type="button" className="button-link" disabled={options.length <= 2}
-                      onClick={() => onChange(options.filter((_, j) => j !== i))}>Удалить</button>
-            </td>
-          </tr>
+            </label>
+            <button
+              type="button"
+              className="line-remove secondary"
+              disabled={options.length <= 2}
+              onClick={() => onChange(options.filter((_, j) => j !== i))}
+            >
+              Удалить
+            </button>
+          </div>
         ))}
-      </tbody>
-      <tfoot>
-        <tr>
-          <td colSpan={3}>
-            <button type="button" className="button-link" onClick={add}>Добавить вариант</button>
-            {onApplyAll && <> · <button type="button" className="button-link" onClick={onApplyAll}>Применить эти варианты ко всем вопросам</button></>}
-          </td>
-        </tr>
-      </tfoot>
-    </table>
+      </div>
+      <div className="actions options-editor-actions">
+        <button type="button" className="secondary" onClick={add}>+ Добавить вариант</button>
+        {onApplyAll && (
+          <button type="button" className="secondary" onClick={onApplyAll}>Применить ко всем вопросам</button>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -144,7 +150,12 @@ export function NumberInput({ value, onChange, ...rest }: {
   'aria-label'?: string
 }) {
   return (
-    <input type="number" step="any" {...rest} value={value ?? ''}
-           onChange={(e) => onChange(e.target.value === '' ? undefined : Number(e.target.value))} />
+    <input
+      type="number"
+      step="any"
+      {...rest}
+      value={value ?? ''}
+      onChange={(e) => onChange(e.target.value === '' ? undefined : Number(e.target.value))}
+    />
   )
 }

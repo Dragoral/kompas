@@ -22,7 +22,10 @@ def bundle(db: Session, p: Patient) -> dict:
         "name": [{"text": p.full_name}], "gender": {"m": "male", "f": "female"}[p.sex],
         "birthDate": p.birth_date.isoformat() if p.birth_date else None,
     }]
-    for i, d in enumerate(p.diagnoses):
+    for i, d in enumerate(p.diagnoses or []):
+        if not isinstance(d, dict) or not isinstance(d.get("icd10"), str) or not d["icd10"].strip():
+            # Skip malformed legacy JSON rows rather than failing the entire export.
+            continue
         res.append({"resourceType": "Condition", "id": f"{p.code}-dx{i}", "subject": {"reference": ref},
                     "code": {"coding": [{"system": "http://hl7.org/fhir/sid/icd-10", "code": d["icd10"], "display": d.get("title")}]}})
     for rx in db.scalars(select(Prescription).where(Prescription.patient_id == p.id)):

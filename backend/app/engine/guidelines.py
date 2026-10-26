@@ -137,7 +137,8 @@ def evaluate(ctx: dict, kb: dict) -> list[dict]:
     for g in applicable(ctx, kb):
         out.append({
             "code": g["code"], "kr_id": g["id"], "title": g["title"], "status": g["status"], "published": g["published"],
-            "url": g["url"], "line": line_reached(g, ctx), "response": response(ctx),
+            "url": g["url"], "verified": g.get("verified", False),
+            "line": line_reached(g, ctx), "response": response(ctx),
             "next_steps": next_steps(g, ctx), "quality": quality(g, ctx),
         })
     return out

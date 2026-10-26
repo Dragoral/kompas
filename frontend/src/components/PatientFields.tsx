@@ -58,24 +58,38 @@ export function RowsEditor({ rows, onChange, labels, placeholders }: {
 }) {
   const update = (i: number, patch: Partial<Row>) => onChange(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)))
   return (
-    <div className="table-wrap">
-      <table className="compact">
-        <thead>
-          <tr><th scope="col">{labels[0]}</th><th scope="col">{labels[1]}</th><th scope="col"><span className="visually-hidden">Удалить</span></th></tr>
-        </thead>
-        <tbody>
-          {rows.map((r, i) => (
-            <tr key={i}>
-              <td><input aria-label={labels[0]} placeholder={placeholders?.[0]} value={r.a} onChange={(e) => update(i, { a: e.target.value })} /></td>
-              <td><input aria-label={labels[1]} placeholder={placeholders?.[1]} value={r.b} onChange={(e) => update(i, { b: e.target.value })} /></td>
-              <td><button type="button" className="button-link" onClick={() => onChange(rows.filter((_, j) => j !== i))}>Удалить</button></td>
-            </tr>
-          ))}
-        </tbody>
-        <tfoot>
-          <tr><td colSpan={3}><button type="button" className="button-link" onClick={() => onChange([...rows, { a: '', b: '' }])}>Добавить строку</button></td></tr>
-        </tfoot>
-      </table>
+    <div className="med-rows">
+      {rows.length > 0 && (
+        <div className="med-rows-head" aria-hidden="true">
+          <span>{labels[0]}</span>
+          <span>{labels[1]}</span>
+          <span />
+        </div>
+      )}
+      {rows.map((r, i) => (
+        <div key={i} className="med-rows-line">
+          <input
+            className="med-input med-input-code"
+            aria-label={labels[0]}
+            placeholder={placeholders?.[0] ?? labels[0]}
+            value={r.a}
+            onChange={(e) => update(i, { a: e.target.value })}
+          />
+          <input
+            className="med-input med-input-text"
+            aria-label={labels[1]}
+            placeholder={placeholders?.[1] ?? labels[1]}
+            value={r.b}
+            onChange={(e) => update(i, { b: e.target.value })}
+          />
+          <button type="button" className="med-btn-remove" onClick={() => onChange(rows.filter((_, j) => j !== i))}>
+            Удалить
+          </button>
+        </div>
+      ))}
+      <button type="button" className="med-btn-add" onClick={() => onChange([...rows, { a: '', b: '' }])}>
+        + Добавить строку
+      </button>
     </div>
   )
 }
@@ -83,43 +97,65 @@ export function RowsEditor({ rows, onChange, labels, placeholders }: {
 export function CoursesEditor({ rows, onChange }: { rows: Course[]; onChange: (rows: Course[]) => void }) {
   const update = (i: number, patch: Partial<Course>) => onChange(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)))
   return (
-    <div className="table-wrap">
-      <table className="compact">
-        <thead>
-          <tr>
-            <th scope="col">Препарат (МНН)</th>
-            <th scope="col">Доза</th>
-            <th scope="col">Недель</th>
-            <th scope="col">Исход</th>
-            <th scope="col"><span className="visually-hidden">Удалить</span></th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r, i) => (
-            <tr key={i}>
-              <td><input aria-label="Препарат" required value={r.inn} onChange={(e) => update(i, { inn: e.target.value })} /></td>
-              <td><input aria-label="Доза" value={r.dose} onChange={(e) => update(i, { dose: e.target.value })} /></td>
-              <td className="col-number">
-                <input aria-label="Недель" type="number" min={0} max={520} value={r.weeks} onChange={(e) => update(i, { weeks: e.target.value })} />
-              </td>
-              <td>
-                <select aria-label="Исход" value={r.outcome} onChange={(e) => update(i, { outcome: e.target.value })}>
-                  {Object.entries(OUTCOMES).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                </select>
-              </td>
-              <td><button type="button" className="button-link" onClick={() => onChange(rows.filter((_, j) => j !== i))}>Удалить</button></td>
-            </tr>
-          ))}
-        </tbody>
-        <tfoot>
-          <tr>
-            <td colSpan={5}>
-              <button type="button" className="button-link"
-                      onClick={() => onChange([...rows, { inn: '', dose: '', weeks: '', outcome: 'unknown' }])}>Добавить курс</button>
-            </td>
-          </tr>
-        </tfoot>
-      </table>
+    <div className="med-rows">
+      {rows.length > 0 && (
+        <div className="med-rows-head med-rows-head-4" aria-hidden="true">
+          <span>Препарат (МНН)</span>
+          <span>Доза</span>
+          <span>Недель</span>
+          <span>Исход</span>
+          <span />
+        </div>
+      )}
+      {rows.map((r, i) => (
+        <div key={i} className="med-rows-line med-rows-line-4">
+          <input
+            className="med-input"
+            aria-label="Препарат"
+            placeholder="МНН"
+            required
+            value={r.inn}
+            onChange={(e) => update(i, { inn: e.target.value })}
+          />
+          <input
+            className="med-input"
+            aria-label="Доза"
+            placeholder="Доза"
+            value={r.dose}
+            onChange={(e) => update(i, { dose: e.target.value })}
+          />
+          <input
+            className="med-input med-input-weeks"
+            aria-label="Недель"
+            type="number"
+            min={0}
+            max={520}
+            placeholder="0"
+            value={r.weeks}
+            onChange={(e) => update(i, { weeks: e.target.value })}
+          />
+          <select
+            className="med-input"
+            aria-label="Исход"
+            value={r.outcome}
+            onChange={(e) => update(i, { outcome: e.target.value })}
+          >
+            {Object.entries(OUTCOMES).map(([v, l]) => (
+              <option key={v} value={v}>{l}</option>
+            ))}
+          </select>
+          <button type="button" className="med-btn-remove" onClick={() => onChange(rows.filter((_, j) => j !== i))}>
+            Удалить
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        className="med-btn-add"
+        onClick={() => onChange([...rows, { inn: '', dose: '', weeks: '', outcome: 'unknown' }])}
+      >
+        + Добавить курс
+      </button>
     </div>
   )
 }

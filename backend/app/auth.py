@@ -16,6 +16,8 @@ import json
 import os
 import secrets
 import threading
+import time
+import hmac
 from datetime import datetime, timedelta
 
 import pyotp
@@ -23,7 +25,7 @@ from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.orm import Session
 
 from . import observability
@@ -87,7 +89,7 @@ def client_ip(request: Request | None) -> str | None:
     return request.client.host
 
 
-def _session_user(token: str | None, db: Session) -> tuple[User, AuthSession]:
+def _session_user(token: str | None, db: Session, *, allow_mfa_setup: bool = False) -> tuple[User, AuthSession]:
     if not token:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Требуется авторизация")
     s = db.scalar(select(AuthSession).where(AuthSession.token_hash == token_hash(token)))
@@ -97,7 +99,7 @@ def _session_user(token: str | None, db: Session) -> tuple[User, AuthSession]:
     user = db.get(User, s.user_id)
     if not user or not user.active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Учётная запись отключена")
-    if REQUIRE_MFA and user.role in ("doctor", "admin") and not s.mfa_passed:
+    if REQUIRE_MFA and user.role in ("doctor", "admin") and not s.mfa_passed and not allow_mfa_setup:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Требуется второй фактор")
     if (t - s.last_seen_at).total_seconds() > 60:  # не пишем в БД на каждый запрос
         sid = s.id
@@ -105,8 +107,16 @@ def _session_user(token: str | None, db: Session) -> tuple[User, AuthSession]:
     return user, s
 
 
-def current_user(cred: HTTPAuthorizationCredentials | None = Depends(_bearer), db: Session = Depends(get_db)) -> User:
-    user = _session_user(cred.credentials if cred else None, db)[0]
+def current_user(request: Request, cred: HTTPAuthorizationCredentials | None = Depends(_bearer), db: Session = Depends(get_db)) -> User:
+    # A password-only session is deliberately restricted to account bootstrap.
+    # This lets a new doctor/admin enroll TOTP even when production enforces MFA.
+    mfa_bootstrap_paths = {"/api/auth/me", "/api/auth/password", "/api/auth/mfa/setup", "/api/auth/mfa/confirm"}
+    user = _session_user(cred.credentials if cred else None, db,
+                         allow_mfa_setup=request.url.path in mfa_bootstrap_paths)[0]
+    # Temporary passwords from provisioning/reset must not grant access to clinical data.
+    allowed_paths = {"/api/auth/me", "/api/auth/password", "/api/auth/mfa/setup", "/api/auth/mfa/confirm"}
+    if user.must_change_password and request.url.path not in allowed_paths:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Сначала смените временный пароль в разделе «Учётная запись»")
     observability.user_id_var.set(user.id)  # для логов (только идентификатор)
     # Вернуть соединение в пул, пока запрос ждёт рабочий поток для обработчика
     # (иначе под нагрузкой пул исчерпывается). Объект пользователя остаётся загруженным.
@@ -114,8 +124,10 @@ def current_user(cred: HTTPAuthorizationCredentials | None = Depends(_bearer), d
     return user
 
 
-def current_session(cred: HTTPAuthorizationCredentials | None = Depends(_bearer), db: Session = Depends(get_db)) -> AuthSession:
-    return _session_user(cred.credentials if cred else None, db)[1]
+def current_session(request: Request, cred: HTTPAuthorizationCredentials | None = Depends(_bearer), db: Session = Depends(get_db)) -> AuthSession:
+    # Logout is always permitted, including from a restricted MFA-enrollment session.
+    return _session_user(cred.credentials if cred else None, db,
+                         allow_mfa_setup=request.url.path == "/api/auth/logout")[1]
 
 
 def require(*roles: str):
@@ -149,10 +161,47 @@ def redeem_ticket(ticket: str, db: Session) -> User:
 
 
 # --- TOTP -------------------------------------------------------------------
-def totp_ok(user: User, code: str | None) -> bool:
-    if not user.totp_secret:
+def _totp_step(secret: str, code: str | None, last_step: int | None = None) -> int | None:
+    """Проверяет TOTP в окне ±1 и возвращает счётчик только при неповторном коде."""
+    if not code or not code.isdigit():
+        return None
+    totp = pyotp.TOTP(secret)
+    current = int(time.time() // totp.interval)
+    for step in (current - 1, current, current + 1):
+        if step <= (last_step if last_step is not None else -1):
+            continue
+        if hmac.compare_digest(totp.generate_otp(step), code):
+            return step
+    return None
+
+
+def totp_ok(user: User, code: str | None, db=None) -> bool:
+    """Validate TOTP and atomically consume its time step to prevent replay.
+
+    The conditional UPDATE matters when two login requests validate the same
+    code concurrently in separate workers. Without it both requests could pass.
+    """
+    secret = user.totp_secret
+    if not secret:
         return False
-    return bool(code) and pyotp.TOTP(user.totp_secret).verify(code, valid_window=1)
+    step = _totp_step(secret, code, user.totp_last_step)
+    if step is None:
+        return False
+    if db is not None:
+        result = db.execute(
+            update(User)
+            .where(User.id == user.id, or_(User.totp_last_step.is_(None), User.totp_last_step < step))
+            .values(totp_last_step=step)
+        )
+        if result.rowcount != 1:
+            db.rollback()
+            return False
+    user.totp_last_step = step
+    return True
+
+
+def valid_totp_setup(secret: str, code: str) -> int | None:
+    return _totp_step(secret, code)
 
 
 # --- доступ к данным пациента ---------------------------------------------

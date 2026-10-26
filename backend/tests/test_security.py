@@ -92,3 +92,15 @@ def test_security_headers(client):
     assert r.headers["X-Content-Type-Options"] == "nosniff"
     assert "default-src 'self'" in r.headers["Content-Security-Policy"]
     assert r.headers["Cache-Control"] == "no-store"
+
+
+def test_totp_code_cannot_be_reused():
+    import time
+    import pyotp
+    secret = pyotp.random_base32()
+    totp = pyotp.TOTP(secret)
+    step = int(time.time() // totp.interval)
+    code = totp.generate_otp(step)
+    assert auth._totp_step(secret, code, last_step=step - 1) == step
+    assert auth._totp_step(secret, code, last_step=step) is None
+    assert auth._totp_step(secret, "abc123", last_step=step - 1) is None

@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { api } from '../../../api/client'
-import type { DrugAssessment, Recommendations } from '../../../api/types'
+import type { DrugAssessment, GuidelineEvaluation, Recommendations } from '../../../api/types'
 import { useAction, useApi } from '../../../api/useApi'
 import { ErrorMessage } from '../../../components/ErrorMessage'
 import { Loader } from '../../../components/Loader'
@@ -81,9 +81,15 @@ export function TherapyTab() {
 
 function RecommendationsView({ id, data, onPrescribed }: { id: string; data: Recommendations; onPrescribed: () => void }) {
   const [selected, setSelected] = useState<string | null>(null)
+  const unverifiedDrugs = data.drugs.filter((drug) => drug.verified !== true)
+  const unverifiedGuidelines = data.guidelines.filter((guideline) => guideline.verified !== true)
+  const routingUnverified = data.routing !== null && data.routing?.verified !== true
 
   return (
     <>
+      {(routingUnverified || unverifiedDrugs.length > 0 || unverifiedGuidelines.length > 0) && <div className="message message-error" role="alert">
+        <strong>Клиническая проверка не завершена.</strong> Часть правил маршрутизации, лекарственных сведений или клинических рекомендаций не подтверждена специалистом по актуальным официальным источникам. Такие данные показаны только для ознакомления; не используйте их как самостоятельное основание для решения. Назначение препарата с флагом проверки «нет» блокируется сервером.
+      </div>}
       {data.routing && (
         <>
           <h3>Маршрутизация</h3>
@@ -105,8 +111,10 @@ function RecommendationsView({ id, data, onPrescribed }: { id: string; data: Rec
         </>
       )}
 
-      <h3>Препараты</h3>
+      <h3>Клинические рекомендации</h3>
       {data.guidelines_note && <p className="message">{data.guidelines_note}</p>}
+      {(data.guidelines ?? []).length === 0 ? <p>Нет применимых клинических рекомендаций в загруженном справочнике.</p> : data.guidelines.map((g) => <GuidelinePanel key={g.kr_id} guideline={g} />)}
+      <h3>Препараты</h3>
       <div className="table-wrap">
         <table>
           <thead>
@@ -121,12 +129,14 @@ function RecommendationsView({ id, data, onPrescribed }: { id: string; data: Rec
           <tbody>
             {data.drugs.map((d) => (
               <tr key={d.drug_id}>
-                <td>{d.trade_name}<div className="muted small">{d.inn}</div></td>
+                <td>{d.trade_name}<div className="muted small">{d.inn}</div>{d.verified !== true && <div><span className="badge badge-high">Справочник не проверен</span></div>}</td>
                 <td><span className={`badge badge-drug-${d.status}`}>{DRUG_STATUS_LABEL[d.status]}</span></td>
                 <td>{formatRegimen(d.regimen)}</td>
                 <td className="small"><DrugReasons drug={d} /></td>
                 <td>
-                  <button type="button" className="secondary" onClick={() => setSelected(d.drug_id)}>Назначить…</button>
+                  <button type="button" className="secondary" disabled={d.verified !== true}
+                          title={d.verified === true ? 'Оформить решение врача' : 'Назначение заблокировано до клинической проверки справочника'}
+                          onClick={() => setSelected(d.drug_id)}>{d.verified === true ? 'Назначить…' : 'Не проверено'}</button>
                 </td>
               </tr>
             ))}
@@ -134,11 +144,39 @@ function RecommendationsView({ id, data, onPrescribed }: { id: string; data: Rec
         </table>
       </div>
       {selected && (
-        <PrescribeForm id={id} drug={data.drugs.find((d) => d.drug_id === selected)!}
+        <PrescribeForm key={selected} id={id} drug={data.drugs.find((d) => d.drug_id === selected)!}
                        onCancel={() => setSelected(null)} onDone={() => { setSelected(null); onPrescribed() }} />
       )}
     </>
   )
+}
+
+function GuidelinePanel({ guideline }: { guideline: GuidelineEvaluation }) {
+  const lineLabel = guideline.line.title ?? `Линия ${guideline.line.line}`
+  return <article className="panel">
+    <h4>{guideline.title}</h4>
+    <p><strong>{lineLabel}</strong> · статус в справочнике: {guideline.status} · публикация: {guideline.published} {guideline.verified === true ? <span className="badge badge-medium">Проверено</span> : <span className="badge badge-high">Не проверено</span>}</p>
+    {guideline.response.scale && <p>
+      Динамика по {guideline.response.scale}: балл {guideline.response.score ?? '—'}, изменение {guideline.response.change_pct ?? '—'}%.
+      {guideline.response.response === true ? ' Признак ответа по используемому правилу отмечен.' : ''}
+      {guideline.response.remission === true ? ' Признак ремиссии по используемому правилу отмечен.' : ''}
+    </p>}
+    {guideline.next_steps.length > 0 && <>
+      <h5>Вопросы для рассмотрения врачом</h5>
+      <ul>{guideline.next_steps.map((step, index) => <li key={`${step.kr_id}-${step.section}-${index}`}>
+        {step.action && <strong>{step.action}: </strong>}{step.text} <span className="muted small">({step.section}{step.evidence ? `; ${step.evidence}` : ''})</span>{' '}
+        <a href={step.url} target="_blank" rel="noreferrer">Источник: {step.guideline_title}</a>
+      </li>)}</ul>
+    </>}
+    {guideline.quality.length > 0 && <details>
+      <summary>Критерии качества медицинской помощи</summary>
+      <ul>{guideline.quality.map((item) => <li key={item.id}>
+        <span>{item.text}: </span><strong>{item.met === true ? 'выполнен по имеющимся данным' : item.met === false ? 'не подтверждён по имеющимся данным' : 'нет данных для оценки'}</strong>
+      </li>)}</ul>
+    </details>}
+    <p><a href={guideline.url} target="_blank" rel="noreferrer">Открыть клиническую рекомендацию</a></p>
+    <p className="muted small">Справочная информация для врача; не является автоматическим назначением. Проверьте применимость и актуальность источника.</p>
+  </article>
 }
 
 function DrugReasons({ drug }: { drug: DrugAssessment }) {
@@ -176,9 +214,13 @@ function PrescribeForm({ id, drug, onCancel, onDone }: {
   const [mode, setMode] = useState<'in_person' | 'remote'>('in_person')
   const [rationale, setRationale] = useState('')
   const [ack, setAck] = useState(false)
+  const [doseMg, setDoseMg] = useState(drug.regimen?.dose_mg == null ? '' : String(drug.regimen.dose_mg))
+  const [timesPerDay, setTimesPerDay] = useState(drug.regimen?.times_per_day == null ? '' : String(drug.regimen.times_per_day))
   const needsAck = drug.status !== 'indicated'
+  const doseProvided = doseMg.trim() !== '' && timesPerDay.trim() !== ''
   const submit = useAction(() => api.post(`/api/doctor/patients/${id}/prescriptions`, {
     drug_id: drug.drug_id,
+    regimen: doseProvided ? { dose_mg: Number(doseMg), times_per_day: Number(timesPerDay) } : undefined,
     mode,
     rationale: rationale.trim() || null,
     acknowledge_off_label: drug.status === 'off_label' && ack,
@@ -193,7 +235,22 @@ function PrescribeForm({ id, drug, onCancel, onDone }: {
   return (
     <form className="form panel" onSubmit={onSubmit} aria-labelledby="prescribe-h">
       <h3 id="prescribe-h">Назначение: {drug.trade_name}</h3>
-      <p>Режим по инструкции: {formatRegimen(drug.regimen)}</p>
+      <p>Режим по справочнику: {formatRegimen(drug.regimen)}</p>
+      <fieldset>
+        <legend>Режим, подтверждаемый врачом</legend>
+        <div className="form-grid">
+          <label>Доза за один приём, мг
+            <input type="number" min="0.1" max="1000" step="0.1" required={drug.status === 'off_label'}
+                   value={doseMg} onChange={(e) => setDoseMg(e.target.value)} />
+          </label>
+          <label>Приёмов в сутки
+            <input type="number" min="1" max="8" step="1" required={drug.status === 'off_label'}
+                   value={timesPerDay} onChange={(e) => setTimesPerDay(e.target.value)} />
+          </label>
+        </div>
+        {drug.regimen?.max_daily_mg != null && <p className="muted small">Максимум по справочнику: {drug.regimen.max_daily_mg} мг/сут. При наличии предостережений сервер применит более консервативный предел.</p>}
+        {drug.status === 'off_label' && <p className="muted small">Дозу вне зарегистрированного показания задаёт врач; сервер проверит положительные значения и пределы, указанные в справочнике.</p>}
+      </fieldset>
       {needsAck && <p className={drug.status === 'contraindicated' ? 'message message-error' : 'message'}>{drug.note}</p>}
       <fieldset>
         <legend>Форма приёма</legend>
@@ -221,7 +278,7 @@ function PrescribeForm({ id, drug, onCancel, onDone }: {
       )}
       <ErrorMessage error={submit.error} />
       <div className="row">
-        <button type="submit" disabled={submit.pending}>Подтвердить назначение</button>
+        <button type="submit" disabled={submit.pending || (drug.status === 'off_label' && !doseProvided)}>Подтвердить назначение</button>
         <button type="button" className="secondary" onClick={onCancel}>Отмена</button>
       </div>
     </form>

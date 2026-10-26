@@ -155,6 +155,27 @@ def get(db: Session) -> dict:
     return kb
 
 
+def unverified_clinical_items(kb: dict) -> list[str]:
+    """Return clinical knowledge entries not explicitly reviewed by a qualified person.
+
+    Missing `verified` is treated the same as False. This list is an operational
+    guard, not proof that setting the flag to True is clinically sufficient.
+    """
+    issues: list[str] = []
+    for category in ("scale", "drug", "guideline"):
+        for code, body in sorted(kb.get(category, {}).items()):
+            if body.get("verified") is not True:
+                issues.append(f"{category}:{code}")
+    for code, body in sorted(kb.get("rules", {}).items()):
+        if code in {"alerts", "routing"} and body.get("verified") is not True:
+            issues.append(f"rules:{code}")
+    for code in ("drug_classes", "icd_conditions", "response_policy", "extraction"):
+        body = kb.get("dictionary", {}).get(code)
+        if body is not None and body.get("verified") is not True:
+            issues.append(f"dictionary:{code}")
+    return issues
+
+
 def classes_for(kb: dict, name: str) -> tuple[str | None, list[str]]:
     inn = kb["name_index"].get(name.lower().strip())
     if not inn:

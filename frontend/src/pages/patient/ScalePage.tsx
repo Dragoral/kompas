@@ -17,14 +17,24 @@ function ScaleForm({ scale }: { scale: ScaleDefinition }) {
   const [answers, setAnswers] = useState<Answers>({})
   const [clientId] = useState(() => crypto.randomUUID())
   const [result, setResult] = useState<ScaleResult | null>(null)
+  const [queuedOffline, setQueuedOffline] = useState(false)
   const submit = useAction(() =>
-    api.post<ScaleResult>('/api/me/scales', { scale_code: scale.code, answers, client_id: clientId }))
+    api.post<ScaleResult>('/api/me/scales', { scale_code: scale.code, answers, client_id: clientId, taken_at: new Date().toISOString() }))
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault()
     const r = await submit.run()
-    if (r) setResult(r)
+    if (r?.queued_offline) setQueuedOffline(true)
+    else if (r) {
+      setResult(r)
+      try {
+        const day = new Date(); const key = `kompas.scale.done.${day.getFullYear()}-${String(day.getMonth()+1).padStart(2,'0')}-${String(day.getDate()).padStart(2,'0')}.${scale.code}`
+        localStorage.setItem(key, scale.title || scale.code)
+      } catch { /* ignore */ }
+    }
   }
+
+  if (queuedOffline) return <><h1>{scale.title}</h1><p className="message" role="status">Ответы зашифрованы и сохранены на устройстве. Они ещё не отправлены врачу и будут синхронизированы после восстановления связи.</p><p><Link to="/me">Вернуться на главную</Link></p></>
 
   if (result) {
     return (
@@ -33,7 +43,7 @@ function ScaleForm({ scale }: { scale: ScaleDefinition }) {
         <p className="message" role="status">Ответы отправлены врачу. Спасибо!</p>
         {result.crisis && (
           <p className="message message-error" role="alert">
-            Врач получил срочное оповещение. Телефоны экстренной помощи — на <Link to="/me">главной странице</Link>.
+            Система сформировала срочный сигнал, но это не подтверждает, что врач уже увидел его. При непосредственной опасности не ждите ответа через приложение — звоните 112 или 103. Телефоны помощи также доступны на <Link to="/me">главной странице</Link>.
           </p>
         )}
         <p><Link to="/me">Вернуться на главную</Link></p>
@@ -44,11 +54,12 @@ function ScaleForm({ scale }: { scale: ScaleDefinition }) {
   return (
     <>
       <h1>{scale.title}</h1>
+      
       {scale.period && <p>{scale.period}</p>}
       <form className="form" onSubmit={onSubmit}>
         <ScaleQuestions scale={scale} answers={answers} onChange={setAnswers} />
         <ErrorMessage error={submit.error} />
-        <button type="submit" disabled={submit.pending}>Отправить</button>
+        <button type="submit" disabled={submit.pending}>Сохранить ответы</button>
       </form>
     </>
   )

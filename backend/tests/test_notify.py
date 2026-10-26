@@ -57,3 +57,7 @@ def test_card_header_bmi(client, tokens):
     hdr = client.get(f"/api/doctor/patients/{p}", headers=tokens["psychiatrist"]).json()["header"]
     assert hdr["bmi"] == round(58 / 1.65 ** 2, 1) and hdr["diagnoses"] and "allergies" in hdr
     assert hdr["medications"][0]["prescribed_here"] is True
+
+
+def test_malformed_notification_template_falls_back():
+    assert notify._format_template("{missing}", {}, "safe fallback", "test-template") == "safe fallback"

@@ -79,7 +79,9 @@ export function UsersPage() {
                     <td>{u.mfa_enabled ? 'Да' : 'Нет'}</td>
                     <td>{!u.active ? 'Заблокирован' : u.locked_until ? `Вход заблокирован до ${formatDateTime(u.locked_until)}` : 'Активен'}</td>
                     <td className="nowrap">
-                      <button type="button" className="button-link" disabled={reset.pending} onClick={() => onReset(u)}>Сбросить пароль</button>
+                      {u.role !== 'patient'
+                        ? <button type="button" className="button-link" disabled={reset.pending || u.id === me?.id} onClick={() => onReset(u)}>Сбросить пароль</button>
+                        : <span className="muted small">Сброс у лечащего врача</span>}
                       {u.id !== me?.id && (
                         <>
                           {' · '}
@@ -139,19 +141,20 @@ function NewUserForm({ onCreated }: { onCreated: (login: string, password: strin
   return (
     <form className="form" onSubmit={onSubmit} aria-labelledby="new-user-h">
       <h2 id="new-user-h">Новый сотрудник</h2>
-      <div className="row">
-        <label>
+      <div className="row form-row-aligned">
+        <label className="field-block">
           Логин
           <input required minLength={3} maxLength={64} pattern="[a-z0-9._-]+" autoComplete="off" value={form.login}
                  aria-describedby="login-hint" onChange={(e) => set({ login: e.target.value })} />
-          <span id="login-hint" className="muted small">Строчная латиница, цифры, «.», «_», «-»</span>
+          <span id="login-hint" className="field-hint">Строчная латиница, цифры, «.», «_», «-»</span>
         </label>
-        <label>
+        <label className="field-block">
           Роль
           <select value={form.role} onChange={(e) => set({ role: e.target.value })}>
             <option value="doctor">Врач</option>
             <option value="admin">Администратор</option>
           </select>
+          <span className="field-hint field-hint-spacer" aria-hidden="true">&nbsp;</span>
         </label>
       </div>
       <label>

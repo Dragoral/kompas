@@ -9,25 +9,31 @@ export interface ApiState<T> {
 }
 
 export function useApi<T>(path: string | null): ApiState<T> {
-  const [data, setData] = useState<T | null>(null)
-  const [error, setError] = useState<ApiError | null>(null)
-  const [loading, setLoading] = useState(path !== null)
+  const [state, setState] = useState<{ path: string | null; data: T | null; error: ApiError | null; loading: boolean }>({
+    path: null, data: null, error: null, loading: path !== null,
+  })
   const [version, setVersion] = useState(0)
 
   useEffect(() => {
-    if (path === null) return
+    if (path === null) {
+      setState({ path: null, data: null, error: null, loading: false })
+      return
+    }
     let cancelled = false
-    setLoading(true)
-    setError(null)
+    setState({ path, data: null, error: null, loading: true })
     api.get<T>(path)
-      .then((d) => { if (!cancelled) setData(d) })
-      .catch((e: ApiError) => { if (!cancelled) setError(e) })
-      .finally(() => { if (!cancelled) setLoading(false) })
+      .then((data) => { if (!cancelled) setState({ path, data, error: null, loading: false }) })
+      .catch((e: ApiError) => {
+        if (!cancelled) setState({ path, data: null, error: e, loading: false })
+      })
     return () => { cancelled = true }
   }, [path, version])
 
   const reload = useCallback(() => setVersion((v) => v + 1), [])
-  return { data, error, loading, reload }
+  // A changed path can render before useEffect starts: never return the previous patient's data.
+  if (path === null) return { data: null, error: null, loading: false, reload }
+  if (state.path !== path) return { data: null, error: null, loading: true, reload }
+  return { data: state.data, error: state.error, loading: state.loading, reload }
 }
 
 export function useAction<A extends unknown[], R>(fn: (...args: A) => Promise<R>) {

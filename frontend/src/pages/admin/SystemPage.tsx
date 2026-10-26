@@ -11,11 +11,13 @@ const QUEUE_LABEL: Record<string, string> = {
 
 export function SystemPage() {
   const state = useApi<SystemStatus>('/api/admin/system')
+  const health = useApi<{ status: string; uptime_s: number }>('/api/health')
+  const ready = useApi<{ status: string }>('/api/ready')
 
   return (
     <>
       <h1>Состояние системы</h1>
-      <p><button type="button" className="secondary" onClick={state.reload}>Обновить</button></p>
+      <p className="row"><button type="button" className="secondary" onClick={() => { state.reload(); health.reload(); ready.reload() }}>Обновить</button><span className="muted small">Process health: {health.data?.status ?? (health.error ? 'ошибка' : 'проверка…')} · Readiness: {ready.data?.status ?? (ready.error ? 'не готов' : 'проверка…')}</span></p>
       <Loader state={state}>
         {(s) => (
           <>

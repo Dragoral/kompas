@@ -1,0 +1,287 @@
+/* ============================================================
+   responsive.css — адаптив под телефон / планшет
+   Подключать ПОСЛЕ theme.css
+   ============================================================ */
+
+/* Safe area для вырезов iPhone */
+@supports (padding: max(0px)) {
+  body {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+  .topbar {
+    padding-top: max(10px, env(safe-area-inset-top));
+  }
+  .sidebar {
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
+  }
+}
+
+/* Сетка страниц: карточки не вылезают */
+.page-container {
+  width: 100%;
+  margin: 0 auto;
+  padding: 0;
+  min-width: 0;
+}
+
+.app-main {
+  min-width: 0;
+  overflow-x: clip;
+}
+
+/* Сетки статистики / карточек */
+.stats-grid,
+.cards-grid,
+.grid-2,
+.grid-3,
+.grid-4 {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+}
+
+/* Таблицы на узком экране — горизонтальный скролл без поломки тени */
+.table-wrap {
+  margin: 0.85rem 0 1.25rem;
+  max-width: 100%;
+}
+
+/* ----- Планшет ≤ 900px (уже есть drawer в styles.css — усиливаем) ----- */
+@media (max-width: 900px) {
+  .app-shell {
+    display: block;
+  }
+
+  .sidebar {
+    width: min(300px, 88vw);
+    z-index: 50;
+  }
+
+  .sidebar-backdrop {
+    z-index: 45;
+  }
+
+  .mobile-menu-button {
+    display: inline-flex !important;
+  }
+
+  .topbar {
+    gap: 0.65rem;
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .app-main {
+    padding: 1rem 14px 1.5rem;
+  }
+
+  .shell-live-alerts,
+  .shell-patient-alert {
+    margin-left: 14px;
+    margin-right: 14px;
+  }
+
+  /* Кнопки в ряд — перенос */
+  .toolbar,
+  .actions,
+  .form-actions,
+  .page-actions {
+    gap: 0.65rem;
+  }
+
+  .toolbar > button,
+  .actions > button,
+  .form-actions > button {
+    flex: 1 1 auto;
+    min-width: min(100%, 140px);
+  }
+
+  .summary {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ----- Телефон ≤ 640px ----- */
+@media (max-width: 640px) {
+  body {
+    font-size: 16px;
+  }
+
+  h1 { font-size: 1.4rem; }
+  h2 { font-size: 1.15rem; }
+  h3 { font-size: 1.05rem; }
+
+  .topbar {
+    min-height: 56px;
+    padding: 8px 12px;
+    align-items: center;
+  }
+
+  .topbar-actions {
+    gap: 0.5rem;
+  }
+
+  .global-search {
+    display: none;
+  }
+
+  .topbar-user,
+  .topbar-icon-link,
+  .topbar-separator,
+  .topbar-subtitle {
+    display: none;
+  }
+
+  .breadcrumbs strong {
+    font-size: 0.95rem;
+    max-width: 55vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .app-main {
+    padding: 0.85rem 12px 1.25rem;
+  }
+
+  .panel,
+  .toolbar,
+  .summary,
+  .card {
+    padding: 0.9rem;
+    border-radius: var(--radius-sm);
+  }
+
+  /* Кнопки на всю ширину в формах */
+  .form button[type="submit"],
+  .login-card .form button[type="submit"] {
+    width: 100%;
+  }
+
+  .row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+
+  .row > label:not(.checkbox) {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .toolbar label:not(.checkbox) {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .toolbar > button {
+    width: 100%;
+  }
+
+  /* Таблица: чуть плотнее */
+  th, td {
+    padding: 0.65rem 0.75rem;
+    font-size: 0.9rem;
+  }
+
+  /* Стат-карточки */
+  .stat-card-button,
+  .stat-card {
+    min-height: 120px;
+  }
+
+  /* Сайдбар на весь экран по высоте */
+  .sidebar {
+    height: 100dvh;
+    padding-top: max(16px, env(safe-area-inset-top));
+  }
+
+  .side-link {
+    font-size: 1rem;
+    min-height: 48px;
+  }
+
+  .sidebar-profile-copy strong {
+    max-width: none;
+    font-size: 0.95rem;
+  }
+
+  /* Логин */
+  .login-page {
+    display: block;
+  }
+
+  .login-showcase {
+    display: none;
+  }
+
+  .login-form-side {
+    min-height: 100dvh;
+    padding: 1.5rem 1.15rem;
+    align-items: flex-start;
+  }
+
+  .login-card {
+    max-width: none;
+    margin-top: 1rem;
+  }
+
+  .role-picker-options {
+    grid-template-columns: 1fr !important;
+    gap: 0.65rem;
+  }
+
+  .workspace-footer {
+    font-size: 0.75rem;
+    padding: 0.85rem 0 1.25rem;
+  }
+
+  /* Фикс «слетающих» абсолютных элементов */
+  .role-choice {
+    position: relative;
+  }
+
+  .message {
+    font-size: 0.9rem;
+    padding: 0.85rem 1rem;
+  }
+}
+
+/* ----- Очень узкие ≤ 380px ----- */
+@media (max-width: 380px) {
+  .app-main {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .quick-action span {
+    display: none;
+  }
+}
+
+/* Пейджинг / табы — не слипаются */
+.tabs,
+.tab-list,
+.segmented {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.tabs a,
+.tabs button,
+.tab-list button,
+.segmented button {
+  min-height: 40px;
+  padding: 0.45rem 0.85rem;
+}
+
+/* Модалки / поповеры в пределах экрана */
+.modal,
+.popover,
+.dropdown-menu {
+  max-width: min(100vw - 24px, 420px);
+  box-sizing: border-box;
+}

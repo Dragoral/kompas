@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+
 import json
+import re
 import secrets
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
@@ -13,7 +16,7 @@ from .. import auth, services
 from ..bus import doctor_channel, patient_channel
 from ..crypto import vault
 from ..db import defer_write, get_db
-from ..engine import alerts, context, extract, fhir, knowledge, recommend
+from ..engine import alerts, context, extract, fhir, knowledge, logic, recommend
 from ..models import (AdverseEvent, Alert, ClinicalAction, Document, Message, Patient, Prescription, ScaleAssignment,
                       ScaleResult, TrustedContact, User, Visit, now)
 from .patient import _last_id, history_for, sse
@@ -40,6 +43,7 @@ def list_patients(response: Response,
                   adherence_below: int | None = Query(None, ge=0, le=100),
                   scale: str | None = Query(None, max_length=16), min_score: int | None = None,
                   monitoring: bool | None = None,
+                  needs_attention: bool = False,
                   sort: str = Query("risk", pattern="^(risk|name|age|last_diary)$"), desc: bool = True,
                   limit: int = Query(200, ge=1, le=1000), offset: int = Query(0, ge=0),
                   user: User = Depends(doctor_only), db: Session = Depends(get_db)):
@@ -54,14 +58,22 @@ def list_patients(response: Response,
         needle = q.strip().lower().replace("ё", "е")
         patients = [p for p in patients if p.code.lower() == needle or needle in (p.full_name or "").lower().replace("ё", "е")]
     if icd:
-        patients = [p for p in patients if any(d["icd10"].startswith(icd.upper()) for d in p.diagnoses)]
+        patients = [p for p in patients if any(isinstance(d, dict) and isinstance(d.get("icd10"), str) and d["icd10"].startswith(icd.upper()) for d in (p.diagnoses or []))]
     ids = [p.id for p in patients]
     open_alerts: dict[int, dict] = {}
     for a in db.scalars(select(Alert).where(Alert.patient_id.in_(ids), Alert.status != "resolved")):
         d = open_alerts.setdefault(a.patient_id, {"critical": 0, "high": 0, "medium": 0})
         d[a.severity] = d.get(a.severity, 0) + 1
-    referrals = {a.patient_id: a.level for a in db.scalars(select(ClinicalAction).where(
-        ClinicalAction.patient_id.in_(ids), ClinicalAction.kind == "referral", ClinicalAction.status.in_(["proposed", "confirmed"])))}
+    referral_levels: dict[int, set[str]] = {}
+    for action in db.scalars(select(ClinicalAction).where(
+        ClinicalAction.patient_id.in_(ids), ClinicalAction.kind == "referral",
+        ClinicalAction.status.in_(["proposed", "confirmed"]))):
+        if action.level:
+            referral_levels.setdefault(action.patient_id, set()).add(action.level)
+    referrals = {
+        pid: ("mandatory" if "mandatory" in levels else "desirable" if "desirable" in levels else sorted(levels)[0])
+        for pid, levels in referral_levels.items() if levels
+    }
     pending = dict(db.execute(select(ClinicalAction.patient_id, func.count()).where(
         ClinicalAction.patient_id.in_(ids), ClinicalAction.status == "proposed").group_by(ClinicalAction.patient_id)).all())
     out = []
@@ -73,6 +85,12 @@ def list_patients(response: Response,
         if severity and not any(rank[s] >= rank[severity] and n for s, n in open_alerts.get(p.id, {}).items()):
             continue
         if referral and referrals.get(p.id) != referral:
+            continue
+        if needs_attention and not (
+            any(open_alerts.get(p.id, {}).get(level, 0) for level in ("critical", "high"))
+            or referrals.get(p.id) == "mandatory"
+            or pending.get(p.id, 0) > 0
+        ):
             continue
         ctx = context.build(db, p)
         rx = db.scalar(select(Prescription).where(Prescription.patient_id == p.id, Prescription.status == "active"))
@@ -104,6 +122,40 @@ def list_patients(response: Response,
 
 
 # --- создание пациента -----------------------------------------------------
+def _validated_diagnoses(items: list[dict] | None) -> list[dict] | None:
+    """Validate diagnosis JSON before it reaches clinical logic or analytics.
+
+    The database stores diagnoses as JSON for backwards compatibility, so validate
+    the shape at the API boundary and keep a defensive fallback for legacy rows.
+    """
+    if items is None:
+        return None
+    if len(items) > 30:
+        raise ValueError("Допускается не более 30 диагнозов")
+    result: list[dict] = []
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            raise ValueError(f"Диагноз {i + 1}: ожидается объект")
+        code = item.get("icd10")
+        if not isinstance(code, str):
+            raise ValueError(f"Диагноз {i + 1}: укажите код МКБ-10")
+        code = code.strip().upper()
+        # Basic ICD-10 code shape (e.g. F41.1, F32.1, I10); correctness of the
+        # clinical coding still belongs to the treating clinician.
+        if not re.fullmatch(r"[A-Z][0-9A-Z]{2}(?:\.[0-9A-Z]{1,4})?", code):
+            raise ValueError(f"Диагноз {i + 1}: некорректный формат кода МКБ-10")
+        title = item.get("title")
+        if title is not None and (not isinstance(title, str) or len(title) > 256):
+            raise ValueError(f"Диагноз {i + 1}: название должно быть строкой до 256 символов")
+        primary = item.get("primary", False)
+        if not isinstance(primary, bool):
+            raise ValueError(f"Диагноз {i + 1}: поле primary должно быть логическим")
+        result.append({**item, "icd10": code, "title": title, "primary": primary})
+    if sum(1 for d in result if d.get("primary")) > 1:
+        raise ValueError("Основным может быть отмечен только один диагноз")
+    return result
+
+
 class PatientIn(BaseModel):
     full_name: str = Field(min_length=3, max_length=128)
     birth_date: date
@@ -116,6 +168,11 @@ class PatientIn(BaseModel):
     therapy_history: list[dict] = Field(default_factory=list)
     maoi_stopped_at: date | None = None
     in_person_visit: bool = True  # пациент заводится на очном приёме
+
+    @field_validator("diagnoses")
+    @classmethod
+    def validate_diagnoses(cls, value: list[dict]) -> list[dict]:
+        return _validated_diagnoses(value) or []
 
 
 def _code(db: Session) -> str:
@@ -150,7 +207,7 @@ def _validate_history(items: list[dict]) -> list[dict]:
 def create_patient(data: PatientIn, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
     login = "p" + secrets.token_hex(3)
     password = secrets.token_urlsafe(9)  # выдаётся пациенту один раз, смена при первом входе
-    pu = User(login=login, password_hash=auth.hash_password(password), role="patient", full_name="Пациент")
+    pu = User(login=login, password_hash=auth.hash_password(password), role="patient", full_name="Пациент", must_change_password=True)
     db.add(pu)
     db.flush()
     p = Patient(code=_code(db), user_id=pu.id, doctor_id=user.id, sex=data.sex, profile=data.profile,
@@ -168,6 +225,29 @@ def create_patient(data: PatientIn, request: Request, user: User = Depends(docto
     alerts.process(db, p, f"created:{p.id}")
     alerts.commit(db)
     return {"id": p.id, "code": p.code, "login": login, "temporary_password": password}
+
+
+
+@router.post("/patients/{pid}/reset-patient-password")
+def reset_patient_password(pid: int, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    """Лечащий врач может выдать пациенту новый временный пароль; администратор — нет."""
+    patient = _p(user, pid, db, request, "password_reset")
+    if not patient.user_id:
+        raise HTTPException(409, "У пациента нет связанной учётной записи")
+    patient_user = db.get(User, patient.user_id)
+    if not patient_user or patient_user.role != "patient" or not patient_user.active:
+        raise HTTPException(409, "Учётная запись пациента недоступна")
+    password = secrets.token_urlsafe(12)
+    patient_user.password_hash = auth.hash_password(password)
+    patient_user.password_changed_at = now()
+    patient_user.must_change_password = True
+    patient_user.failed_logins = 0
+    patient_user.locked_until = None
+    auth.revoke_all(db, patient_user.id)
+    auth.audit(db, user, "patient_password_reset", "patient", patient.id, patient_id=patient.id,
+               ip=auth.client_ip(request), account_id=patient_user.id)
+    db.commit()
+    return {"temporary_password": password}
 
 
 # --- карточка ----------------------------------------------------------------
@@ -234,6 +314,11 @@ class PatientPatch(BaseModel):
     maoi_stopped_at: date | None = None
     alert_thresholds: dict | None = None
 
+    @field_validator("diagnoses")
+    @classmethod
+    def validate_diagnoses(cls, value: list[dict] | None) -> list[dict] | None:
+        return _validated_diagnoses(value)
+
 
 @router.patch("/patients/{pid}")
 def patch_patient(pid: int, data: PatientPatch, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
@@ -263,6 +348,14 @@ class VisitIn(BaseModel):
     plan: dict = Field(default_factory=dict)
     next_visit_at: datetime | None = None
     diagnosis_confirmed: bool = True
+
+    @field_validator("next_visit_at")
+    @classmethod
+    def normalize_next_visit_at(cls, value: datetime | None) -> datetime | None:
+        # Store UTC-naive timestamps consistently with the existing model/database contract.
+        if value is not None and value.tzinfo is not None:
+            return value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value
 
 
 def visit_dict(v: Visit) -> dict:
@@ -320,9 +413,16 @@ def recommendations(pid: int, request: Request, user: User = Depends(doctor_only
     return res
 
 
+class RegimenIn(BaseModel):
+    """Dose parameters entered by a clinician; daily dose is computed server-side."""
+    dose_mg: float = Field(gt=0, le=1000)
+    times_per_day: int = Field(ge=1, le=8)
+
+
 class PrescribeIn(BaseModel):
     drug_id: str
     indication_id: str | None = None
+    regimen: RegimenIn | None = None
     mode: str = Field("in_person", pattern="^(in_person|remote)$")
     rationale: str | None = Field(None, max_length=2000)
     acknowledge_off_label: bool = False
@@ -331,23 +431,92 @@ class PrescribeIn(BaseModel):
 
 @router.post("/patients/{pid}/prescriptions")
 def prescribe(pid: int, data: PrescribeIn, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
-    """Назначение — только явным действием врача. Система проверяет инструкцию:
-    вне показаний — требуется подтверждение и обоснование; противопоказания —
-    требуется отдельное подтверждение и обоснование (решение врача фиксируется)."""
+    """Назначение подтверждается врачом; выбранное показание и режим повторно проверяются сервером."""
     p = _p(user, pid, db, request, "prescribe")
     kb = knowledge.get(db)
     drug = kb["drug"].get(data.drug_id)
     if not drug:
         raise HTTPException(404, "Препарат не найден в справочнике (рекомендуются только препараты, зарегистрированные в РФ)")
+    if drug.get("verified") is not True:
+        raise HTTPException(409, {
+            "message": "Назначение заблокировано: сведения о препарате не прошли клиническую проверку по актуальной официальной инструкции.",
+            "drug_id": drug["id"], "verified": False,
+        })
     if data.mode == "remote" and not p.in_person_visit_at:
         raise HTTPException(409, "Дистанционная коррекция терапии возможна только после установления диагноза на очном приёме (193н п. 38)")
-    ev = recommend.evaluate_drug(drug, context.build(db, p), kb)
-    if ev["status"] == "contraindicated" and not (data.acknowledge_contraindications and data.rationale and len(data.rationale) >= 20):
+    ctx = context.build(db, p)
+    ev = recommend.evaluate_drug(drug, ctx, kb)
+    if ev["status"] == "contraindicated" and not (data.acknowledge_contraindications and data.rationale and len(data.rationale.strip()) >= 20):
         raise HTTPException(409, {"message": "Противопоказано по инструкции. Для назначения требуется подтверждение и обоснование врача.", "evaluation": ev})
-    if ev["status"] == "off_label" and not (data.acknowledge_off_label and data.rationale and len(data.rationale) >= 20):
+    if ev["status"] == "off_label" and not (data.acknowledge_off_label and data.rationale and len(data.rationale.strip()) >= 20):
         raise HTTPException(409, {"message": "Нет зарегистрированного показания. Применение вне инструкции — только с обоснованием врача.", "evaluation": ev})
-    ind = next((i for i in drug["indications"] if i["id"] == (data.indication_id or (ev["indication"] or {}).get("id"))), None)
-    regimen = (ind or {}).get("regimen") or {"dose_mg": None, "times_per_day": 1}
+    if ev["status"] == "off_label" and data.regimen is None:
+        raise HTTPException(422, "Для внеинструкционного назначения врач должен явно указать дозу и частоту приёма")
+
+    # Do not trust a caller-supplied indication_id: it must independently match
+    # the patient's diagnosis and any structured conditions required by that indication.
+    ind = None
+    if data.indication_id:
+        ind = next((item for item in drug.get("indications", []) if item.get("id") == data.indication_id), None)
+        if ind is None:
+            raise HTTPException(422, "Указанное показание отсутствует в инструкции препарата")
+        matches_icd = any(code.startswith(prefix) for code in ctx["patient"].get("icd10", [])
+                          for prefix in ind.get("icd10", []))
+        needs_match = "requires" not in ind or logic.safe_eval(ind["requires"], ctx, f"drug:{drug['id']}:indication:{ind['id']}")
+        if not matches_icd or not needs_match:
+            raise HTTPException(422, "Выбранное показание не подтверждается данными пациента; укажите применимое показание или оформите внеинструкционное применение без indication_id")
+    elif ev.get("indication"):
+        ind = next((item for item in drug.get("indications", []) if item.get("id") == ev["indication"].get("id")), None)
+
+    regimen = dict((ind or {}).get("regimen") or {"dose_mg": None, "times_per_day": 1})
+    if data.regimen is not None:
+        # For an applicable registered indication, use its explicit maximum daily dose;
+        # if there is no separate maximum, do not exceed the catalogued daily regimen.
+        # For off-label use, cap the entered dose at the largest daily dose stated in
+        # any registered indication, and still require the clinician's rationale above.
+        max_daily = regimen.get("max_daily_mg") or regimen.get("daily_mg")
+        if max_daily is None and regimen.get("dose_mg") is not None:
+            max_daily = float(regimen["dose_mg"]) * int(regimen.get("times_per_day") or 1)
+        if ind is None:
+            known_limits = []
+            for candidate in drug.get("indications", []):
+                candidate_regimen = candidate.get("regimen") or {}
+                candidate_limit = candidate_regimen.get("max_daily_mg") or candidate_regimen.get("daily_mg")
+                if candidate_limit is None and candidate_regimen.get("dose_mg") is not None:
+                    candidate_limit = float(candidate_regimen["dose_mg"]) * int(candidate_regimen.get("times_per_day") or 1)
+                if candidate_limit is not None:
+                    known_limits.append(float(candidate_limit))
+            max_daily = max(known_limits) if known_limits else None
+        # If the evaluation flags additional cautions, do not allow a dose above the
+        # standard regimen without a specialist-verified patient-specific rule.
+        base_daily = regimen.get("daily_mg")
+        if ev.get("cautions") and base_daily is not None:
+            max_daily = min(float(max_daily), float(base_daily)) if max_daily is not None else float(base_daily)
+        elif ev.get("cautions") and ind is None:
+            # Without a patient-matched registered indication, use the most
+            # conservative catalogued standard daily regimen as the ceiling.
+            standard_limits = []
+            for candidate in drug.get("indications", []):
+                candidate_regimen = candidate.get("regimen") or {}
+                standard = candidate_regimen.get("daily_mg")
+                if standard is None and candidate_regimen.get("dose_mg") is not None:
+                    standard = float(candidate_regimen["dose_mg"]) * int(candidate_regimen.get("times_per_day") or 1)
+                if standard is not None:
+                    standard_limits.append(float(standard))
+            if standard_limits and max_daily is not None:
+                max_daily = min(float(max_daily), min(standard_limits))
+        if max_daily is None:
+            raise HTTPException(422, "Для этого препарата в справочнике нет проверяемого предела дозы; введите назначение после дополнения справочника специалистом")
+        daily = float(data.regimen.dose_mg) * int(data.regimen.times_per_day)
+        if daily > float(max_daily) + 1e-9:
+            raise HTTPException(422, {"message": f"Суточная доза превышает допустимый предел справочника ({max_daily} мг/сут)", "max_daily_mg": max_daily})
+        regimen.update({"dose_mg": float(data.regimen.dose_mg), "times_per_day": int(data.regimen.times_per_day),
+                        "daily_mg": round(daily, 3), "max_daily_mg": float(max_daily)})
+
+    # A contradictory evaluator result indicates stale/malformed knowledge and must not
+    # silently turn into a registered-indication prescription.
+    if ind is not None and ev["status"] == "off_label":
+        raise HTTPException(409, "Конфликт оценки показания и справочника. Обновите/проверьте справочник перед назначением.")
 
     for old in db.scalars(select(Prescription).where(Prescription.patient_id == p.id, Prescription.status.in_(["active", "paused"]))):
         old.status, old.stopped_at = "stopped", now()
@@ -357,11 +526,11 @@ def prescribe(pid: int, data: PrescribeIn, request: Request, user: User = Depend
     rx.rationale = data.rationale
     db.flush()
     services.schedule_doses(db, rx)
-    for s in (drug.get("monitoring") or {}).get("scales", []):
-        db.add(ScaleAssignment(patient_id=p.id, scale_code=s["scale"], every_days=s["every_days"], next_due=date.today(),
+    for scale in (drug.get("monitoring") or {}).get("scales", []):
+        db.add(ScaleAssignment(patient_id=p.id, scale_code=scale["scale"], every_days=scale["every_days"], next_due=date.today(),
                                reason=f"План мониторинга: {drug['trade_name']}"))
     auth.audit(db, user, "prescription_confirmed", "prescription", rx.id, patient_id=p.id, drug=drug["id"],
-               status=ev["status"], mode=data.mode)
+               status=ev["status"], mode=data.mode, indication=ind and ind["id"], regimen=regimen)
     alerts.process(db, p, f"rx:{rx.id}")
     alerts.commit(db)
     return {"id": rx.id, "status": ev["status"], "regimen": regimen}
@@ -380,6 +549,29 @@ def change_prescription(rid: int, data: StopIn, request: Request, user: User = D
     p = _p(user, rx.patient_id, db, request, "prescription_change")
     if not p.in_person_visit_at:
         raise HTTPException(409, "Коррекция терапии возможна только после очного приёма (193н п. 38)")
+    if data.action == "resume":
+        kb = knowledge.get(db)
+        drug = kb.get("drug", {}).get(rx.drug_id)
+        if not drug:
+            raise HTTPException(409, "Препарат больше отсутствует в действующем справочнике; создайте новое назначение после проверки врачом")
+        ev = recommend.evaluate_drug(drug, context.build(db, p), kb)
+        if ev["status"] == "contraindicated":
+            raise HTTPException(409, {"message": "Возобновление заблокировано: текущая оценка выявила противопоказание или критическое взаимодействие. Проверьте карточку и оформите новое решение врача.", "evaluation": ev})
+        other_active = db.scalar(select(Prescription.id).where(
+            Prescription.patient_id == p.id, Prescription.status == "active", Prescription.id != rx.id).limit(1))
+        if other_active:
+            raise HTTPException(409, "У пациента уже есть другое действующее назначение; сначала согласуйте план терапии")
+        if rx.indication_id:
+            ind = next((item for item in drug.get("indications", []) if item.get("id") == rx.indication_id), None)
+            if not ind:
+                raise HTTPException(409, "Показание старого назначения отсутствует в справочнике; создайте новое назначение после проверки")
+            ctx = context.build(db, p)
+            matches_icd = any(code.startswith(prefix) for code in ctx["patient"].get("icd10", []) for prefix in ind.get("icd10", []))
+            needs_match = "requires" not in ind or logic.safe_eval(ind["requires"], ctx, f"drug:{drug['id']}:indication:{ind['id']}")
+            if not matches_icd or not needs_match:
+                raise HTTPException(409, "Данные пациента больше не соответствуют показанию старого назначения; оформите новое решение врача")
+        elif not (rx.off_label and data.reason and len(data.reason.strip()) >= 20):
+            raise HTTPException(409, "Для возобновления внеинструкционного назначения требуется новое обоснование врача не короче 20 символов")
     rx.status = {"stop": "stopped", "pause": "paused", "resume": "active"}[data.action]
     if data.action == "stop":
         rx.stopped_at = now()
@@ -492,6 +684,22 @@ def alert_resolve(aid: int, data: ResolveIn, request: Request, user: User = Depe
     return alerts.alert_dict(a)
 
 
+@router.post("/adverse-events/{eid}/review")
+def review_adverse_event(eid: int, request: Request, user: User = Depends(doctor_only), db: Session = Depends(get_db)):
+    """Зафиксировать врачебный разбор нежелательного явления; самостоятельных клинических действий нет."""
+    ae = db.get(AdverseEvent, eid)
+    if not ae:
+        raise HTTPException(404, "Нежелательное явление не найдено")
+    patient = _p(user, ae.patient_id, db, request, "ae_review")
+    if ae.status != "reviewed":
+        ae.status = "reviewed"
+        auth.audit(db, user, "adverse_event_reviewed", "adverse_event", ae.id,
+                   patient_id=patient.id, ip=auth.client_ip(request))
+        alerts.process(db, patient, f"ae-review:{ae.id}")
+        alerts.commit(db)
+    return {"ok": True, "id": ae.id, "status": ae.status}
+
+
 # --- очередь решений врача ---------------------------------------------------
 def action_dict(a: ClinicalAction) -> dict:
     return {"id": a.id, "patient_id": a.patient_id, "kind": a.kind, "level": a.level, "title": a.title, "payload": a.payload,
@@ -542,7 +750,14 @@ def pv_report(aid: int, request: Request, user: User = Depends(doctor_only), db:
         raise HTTPException(404, "Извещение не найдено")
     p = _p(user, a.patient_id, db, request, "pv_report")
     kb = knowledge.get(db)
-    ae = db.scalar(select(AdverseEvent).where(AdverseEvent.patient_id == p.id).order_by(AdverseEvent.created_at.desc()))
+    source_ae_id = (a.payload or {}).get("adverse_event_id")
+    ae = db.get(AdverseEvent, source_ae_id) if isinstance(source_ae_id, int) else None
+    if ae is not None and ae.patient_id != p.id:
+        # Never allow a malformed action payload to cross patient boundaries.
+        raise HTTPException(409, "Извещение связано с другим пациентом")
+    if ae is None:
+        # Backward compatibility for actions created before adverse_event_id was recorded.
+        ae = db.scalar(select(AdverseEvent).where(AdverseEvent.patient_id == p.id).order_by(AdverseEvent.created_at.desc()))
     rx = db.get(Prescription, ae.prescription_id) if ae and ae.prescription_id else None
     drug = kb["drug"].get(rx.drug_id, {}) if rx else {}
     doctor = db.get(User, p.doctor_id)
@@ -657,7 +872,11 @@ def fhir_export(pid: int, request: Request, user: User = Depends(doctor_only), d
 
 @router.get("/stream")
 async def stream(ticket: str, request: Request, last_event_id: int | None = None, db: Session = Depends(get_db)):
-    user = auth.redeem_ticket(ticket, db)
+    def _redeem_in_worker(value: str):
+        from ..db import SessionLocal
+        with SessionLocal() as ticket_db:
+            return auth.redeem_ticket(value, ticket_db)
+    user = await asyncio.to_thread(_redeem_in_worker, ticket)
     if user.role != "doctor":
         raise HTTPException(403, "Недостаточно прав")
     db.close()

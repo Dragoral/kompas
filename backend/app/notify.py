@@ -22,6 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .models import Notification, TrustedContact, User, now
+from .observability import report_problem
 
 log = logging.getLogger("kompas.notify")
 PROVIDER = os.getenv("NOTIFY_PROVIDER", "log")
@@ -57,6 +58,17 @@ def _first_name(full_name: str | None) -> str:
     return parts[1] if len(parts) > 1 else (parts[0] if parts else "Ваш близкий")
 
 
+def _format_template(template: str, values: dict[str, str], fallback: str, ref: str) -> str:
+    try:
+        return template.format(**values)
+    except (KeyError, IndexError, ValueError, AttributeError) as exc:
+        report_problem("notify", ref, f"Некорректный шаблон уведомления: {type(exc).__name__}; использован резервный текст")
+        try:
+            return fallback.format(**values)
+        except (KeyError, IndexError, ValueError, AttributeError):
+            return "Компас: срочное уведомление. Откройте кабинет врача."
+
+
 def route_critical(db: Session, kb: dict, alert, patient, at: datetime | None = None) -> list[str]:
     """Поставить внешние уведомления по критическому алерту. Возвращает описание маршрута."""
     pol = policy(kb)
@@ -66,7 +78,7 @@ def route_critical(db: Session, kb: dict, alert, patient, at: datetime | None = 
     routed = []
     if doctor and within_hours(doctor.working_hours or pol["working_hours"], local):
         db.add(Notification(user_id=doctor.id, alert_id=alert.id, channel="sms", reason="attending",
-                            text=pol["doctor_sms_template"].format(**fmt)))
+                            text=_format_template(pol.get("doctor_sms_template", DEFAULT_POLICY["doctor_sms_template"]), fmt, DEFAULT_POLICY["doctor_sms_template"], "doctor_sms_template")))
         routed.append("лечащий врач (рабочее время)")
     else:
         routed.append("лечащий врач — вне рабочего времени, увидит алерт первым при входе")
@@ -75,14 +87,14 @@ def route_critical(db: Session, kb: dict, alert, patient, at: datetime | None = 
             if duty:
                 alert.escalated_to, alert.escalated_at = duty.id, now()
                 db.add(Notification(user_id=duty.id, alert_id=alert.id, channel="sms", reason="duty",
-                                    text=pol["duty_sms_template"].format(**fmt)))
+                                    text=_format_template(pol.get("duty_sms_template", DEFAULT_POLICY["duty_sms_template"]), fmt, DEFAULT_POLICY["duty_sms_template"], "duty_sms_template")))
                 routed.append("дежурная служба")
     tc_pol = pol.get("trusted_contact") or {}
     if alert.rule_id in tc_pol.get("rules", []) and tc_pol.get("sms_template"):
         if tc_pol.get("any_time", True) or within_hours(pol["working_hours"], local):
             for tc in db.scalars(select(TrustedContact).where(TrustedContact.patient_id == patient.id, TrustedContact.revoked_at.is_(None))):
                 db.add(Notification(trusted_contact_id=tc.id, alert_id=alert.id, channel="sms", reason="trusted_contact",
-                                    text=tc_pol["sms_template"].format(**fmt)))
+                                    text=_format_template(tc_pol["sms_template"], fmt, "Компас: важное уведомление для доверенного лица пациента.", "trusted_contact.sms_template")))
                 routed.append("доверенное лицо (по согласию пациента)")
     return routed
 
@@ -90,7 +102,7 @@ def route_critical(db: Session, kb: dict, alert, patient, at: datetime | None = 
 def enqueue_escalation(db: Session, kb: dict, alert, patient, duty: User) -> None:
     fmt = {"patient_code": patient.code, "patient_first_name": _first_name(patient.full_name)}
     db.add(Notification(user_id=duty.id, alert_id=alert.id, channel="sms", reason="escalation",
-                        text=policy(kb)["duty_sms_template"].format(**fmt)))
+                        text=_format_template(policy(kb).get("duty_sms_template", DEFAULT_POLICY["duty_sms_template"]), fmt, DEFAULT_POLICY["duty_sms_template"], "duty_sms_template")))
 
 
 def _send_log(phone: str | None, text: str) -> str:

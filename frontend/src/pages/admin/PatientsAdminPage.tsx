@@ -18,11 +18,23 @@ export function PatientsAdminPage() {
   const state = useApi<PatientRow[]>('/api/admin/patients')
   const doctors = useApi<StaffUser[]>('/api/admin/users?role=doctor')
   const [editing, setEditing] = useState<PatientRow | null>(null)
+  const requests = useApi<ReassignmentRow[]>('/api/admin/attending-requests')
 
   return (
     <>
       <h1>Пациенты</h1>
-      <p className="muted">Для администрирования показаны только коды пациентов и лечащие врачи.</p>
+      <p className="muted">Для администрирования показаны только коды пациентов и лечащие врачи. Смена врача применяется после подтверждения другим администратором.</p>
+      <section aria-labelledby="reassign-requests-h">
+        <h2 id="reassign-requests-h">Запросы на смену врача</h2>
+        <Loader state={requests}>
+          {(items) => items.length === 0 ? <p>Нет запросов, ожидающих подтверждения.</p> : (
+            <div className="table-wrap"><table>
+              <thead><tr><th scope="col">Пациент</th><th scope="col">Было</th><th scope="col">Станет</th><th scope="col">Запросил</th><th scope="col">Причина</th><th scope="col">Действия</th></tr></thead>
+              <tbody>{items.map((item) => <ReassignmentReviewRow key={item.id} item={item} onDone={() => { requests.reload(); state.reload() }} />)}</tbody>
+            </table></div>
+          )}
+        </Loader>
+      </section>
       <Loader state={state}>
         {(rows) => (
           <div className="table-wrap">
@@ -69,8 +81,9 @@ function ReassignForm({ patient, doctors, onDone, onCancel }: {
 
   return (
     <form className="form panel" aria-labelledby="reassign-h" onSubmit={async (e) => { e.preventDefault(); if (await save.run()) onDone() }}>
-      <h2 id="reassign-h">Смена лечащего врача: {patient.code}</h2>
-      <p className="muted">Данные пациента станут доступны новому врачу и перестанут быть доступны прежнему. Действие записывается в журнал аудита.</p>
+      <h2 id="reassign-h">Запрос смены лечащего врача: {patient.code}</h2>
+      <p className="muted">Запрос отправится на подтверждение второму администратору. Смена не вступит в силу сразу.</p>
+      <p className="muted">Причина будет сохранена в журнале аудита.</p>
       <label>
         Новый лечащий врач
         <select required value={doctorId} onChange={(e) => setDoctorId(e.target.value)}>
@@ -84,9 +97,42 @@ function ReassignForm({ patient, doctors, onDone, onCancel }: {
       </label>
       <ErrorMessage error={save.error} />
       <div className="row">
-        <button type="submit" disabled={save.pending}>Сменить</button>
+        <button type="submit" disabled={save.pending}>Отправить запрос</button>
         <button type="button" className="secondary" onClick={onCancel}>Отмена</button>
       </div>
     </form>
   )
+}
+
+
+interface ReassignmentRow {
+  id: number
+  patient_id: number
+  patient_code: string
+  from_doctor_name: string | null
+  to_doctor_name: string | null
+  requested_by: number
+  requested_by_name: string | null
+  reason: string
+  created_at: string
+}
+
+function ReassignmentReviewRow({ item, onDone }: { item: ReassignmentRow; onDone: () => void }) {
+  const [comment, setComment] = useState('')
+  const approve = useAction(() => api.post(`/api/admin/attending-requests/${item.id}/approve`, { comment }))
+  const reject = useAction(() => api.post(`/api/admin/attending-requests/${item.id}/reject`, { comment }))
+  const run = async (decision: 'approve' | 'reject') => {
+    const action = decision === 'approve' ? approve : reject
+    if (await action.run()) onDone()
+  }
+  return <tr>
+    <td>{item.patient_code}</td><td>{item.from_doctor_name ?? '—'}</td><td>{item.to_doctor_name ?? '—'}</td>
+    <td>{item.requested_by_name ?? `ID ${item.requested_by}`}</td><td>{item.reason}</td>
+    <td>
+      <label className="small">Комментарий решения<input maxLength={1000} value={comment} onChange={(e) => setComment(e.target.value)} /></label>
+      <ErrorMessage error={approve.error ?? reject.error} />
+      <div className="row"><button type="button" disabled={approve.pending || reject.pending} onClick={() => run('approve')}>Подтвердить</button>
+      <button type="button" className="secondary" disabled={approve.pending || reject.pending} onClick={() => run('reject')}>Отклонить</button></div>
+    </td>
+  </tr>
 }

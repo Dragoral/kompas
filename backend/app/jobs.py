@@ -102,11 +102,26 @@ def notifications() -> None:
 
 
 def backups() -> None:
-    if IS_SQLITE:  # для PostgreSQL — pg_dump/архив WAL средствами инфраструктуры
+    if IS_SQLITE:
         backup.create()
+    else:
+        from . import backup_postgres
+        backup_postgres.create()
 
 
-async def _loop(name: str, fn, period: float):
+def backup_drill() -> None:
+    if IS_SQLITE:
+        backup.drill()
+    else:
+        from . import backup_postgres
+        backup_postgres.drill()
+
+
+async def _loop(name: str, fn, period: float, initial_delay: float = 0):
+    # Long-running backups and restore drills must not execute during every process
+    # startup/reload; run them on their configured cadence instead.
+    if initial_delay > 0:
+        await asyncio.sleep(initial_delay)
     while True:
         t0 = time.perf_counter()
         try:
@@ -126,8 +141,17 @@ SCHEDULE = {
     "maintenance": (maintenance, 60),
     "notifications": (notifications, 5),
     "backups": (backups, int(os.getenv("BACKUP_INTERVAL_MIN", "15")) * 60),
+    "backup_drill": (backup_drill, int(os.getenv("BACKUP_DRILL_INTERVAL_HOURS", "168")) * 3600),
 }
 
 
 def start() -> list[asyncio.Task]:
-    return [asyncio.create_task(_loop(name, fn, period)) for name, (fn, period) in SCHEDULE.items()]
+    # Deterministic unit/integration tests exercise the jobs directly; do not run
+    # long-lived schedulers against the same disposable SQLite database.
+    if os.getenv("KOMPAS_DISABLE_BACKGROUND_JOBS", "0") == "1":
+        return []
+    tasks = []
+    for name, (fn, period) in SCHEDULE.items():
+        delay = period if name in {"backups", "backup_drill"} else 0
+        tasks.append(asyncio.create_task(_loop(name, fn, period, initial_delay=delay)))
+    return tasks

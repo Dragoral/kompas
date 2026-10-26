@@ -43,7 +43,7 @@ def _pct(xs, q):
 
 
 @router.get("/metrics")
-def metrics(user: User = Depends(auth.require("doctor", "admin")), db: Session = Depends(get_db)):
+def metrics(user: User = Depends(auth.require("admin")), db: Session = Depends(get_db)):
     with _lock:
         routes = {r: {"n": len(v), "p50_ms": _pct(v, .5), "p95_ms": _pct(v, .95), "max_ms": round(max(v), 1)}
                   for r, v in _latency.items() if v}

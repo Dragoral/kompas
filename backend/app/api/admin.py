@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 from .. import auth
 from ..db import get_db
 from ..engine import knowledge
-from ..models import AuditLog, KnowledgeItem, KnowledgeVersion, Patient, User, now
+from ..models import AuditLog, KnowledgeItem, KnowledgeVersion, Patient, PatientReassignmentRequest, User, now
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 review = APIRouter(prefix="/api/review", tags=["review"])
@@ -181,7 +181,8 @@ def create_user(data: StaffIn, request: Request, user: User = Depends(admin_only
         raise HTTPException(422, "Для врача укажите специальность")
     password = secrets.token_urlsafe(12)  # выдаётся один раз; смена при первом входе
     u = User(login=data.login, password_hash=auth.hash_password(password), role=data.role, full_name=data.full_name,
-             specialty=data.specialty, frmr_id=data.frmr_id, is_duty=data.is_duty, is_reviewer=data.is_reviewer)
+             specialty=data.specialty, frmr_id=data.frmr_id, is_duty=data.is_duty, is_reviewer=data.is_reviewer,
+             must_change_password=True)
     u.phone = data.phone
     db.add(u)
     db.flush()
@@ -226,6 +227,8 @@ def update_user(uid: int, data: StaffPatch, request: Request, user: User = Depen
     u = db.get(User, uid)
     if not u:
         raise HTTPException(404, "Пользователь не найден")
+    if u.role == "patient":
+        raise HTTPException(403, "Администратор не изменяет учётные записи пациентов")
     if u.id == user.id and data.active is False:
         raise HTTPException(409, "Нельзя заблокировать собственную учётную запись")
     changed = data.model_dump(exclude_unset=True)
@@ -243,8 +246,10 @@ def reset_password(uid: int, request: Request, user: User = Depends(admin_only),
     u = db.get(User, uid)
     if not u:
         raise HTTPException(404, "Пользователь не найден")
+    if u.role == "patient":
+        raise HTTPException(403, "Пароль пациента сбрасывает лечащий врач")
     password = secrets.token_urlsafe(12)
-    u.password_hash, u.password_changed_at, u.failed_logins, u.locked_until = auth.hash_password(password), now(), 0, None
+    u.password_hash, u.password_changed_at, u.failed_logins, u.locked_until, u.must_change_password = auth.hash_password(password), now(), 0, None, True
     auth.revoke_all(db, u.id)
     auth.audit(db, user, "password_reset", "user", u.id, ip=auth.client_ip(request))
     db.commit()
@@ -268,19 +273,98 @@ class ReassignIn(BaseModel):
 
 @router.post("/patients/{pid}/attending")
 def reassign(pid: int, data: ReassignIn, request: Request, user: User = Depends(admin_only), db: Session = Depends(get_db)):
-    """Смена лечащего врача. Данные пациента становятся доступны новому врачу и недоступны прежнему."""
+    """Запрос смены врача; фактическое назначение требует решения второго администратора."""
     p = db.get(Patient, pid)
     d = db.get(User, data.doctor_id)
     if not p or p.erased_at:
         raise HTTPException(404, "Пациент не найден")
     if not d or d.role != "doctor" or not d.active:
         raise HTTPException(422, "Укажите действующего врача")
-    old = p.doctor_id
-    p.doctor_id = d.id
-    auth.audit(db, user, "attending_changed", "patient", p.id, patient_id=p.id, ip=auth.client_ip(request),
-               from_doctor=old, to_doctor=d.id)
+    if p.doctor_id == d.id:
+        raise HTTPException(422, "Этот врач уже является лечащим")
+    duplicate = db.scalar(select(PatientReassignmentRequest.id).where(
+        PatientReassignmentRequest.patient_id == p.id,
+        PatientReassignmentRequest.status == "pending"))
+    if duplicate:
+        raise HTTPException(409, "Для пациента уже есть ожидающий подтверждения запрос")
+    item = PatientReassignmentRequest(patient_id=p.id, from_doctor_id=p.doctor_id, to_doctor_id=d.id,
+                                     requested_by=user.id, reason=data.reason, status="pending")
+    db.add(item)
+    db.flush()
+    auth.audit(db, user, "attending_reassignment_requested", "patient_reassignment_request", item.id,
+               patient_id=p.id, ip=auth.client_ip(request), from_doctor=p.doctor_id, to_doctor=d.id)
     db.commit()
-    return {"ok": True, "doctor_id": d.id}
+    return {"ok": True, "request_id": item.id, "status": item.status}
+
+
+@router.get("/attending-requests")
+def list_reassignments(user: User = Depends(admin_only), db: Session = Depends(get_db)):
+    rows = db.scalars(select(PatientReassignmentRequest).where(
+        PatientReassignmentRequest.status == "pending").order_by(PatientReassignmentRequest.created_at)).all()
+    out = []
+    for item in rows:
+        patient = db.get(Patient, item.patient_id)
+        old_doctor = db.get(User, item.from_doctor_id)
+        new_doctor = db.get(User, item.to_doctor_id)
+        requester = db.get(User, item.requested_by)
+        if not patient or patient.erased_at:
+            continue
+        out.append({"id": item.id, "patient_id": patient.id, "patient_code": patient.code,
+                    "from_doctor_id": item.from_doctor_id, "from_doctor_name": old_doctor.full_name if old_doctor else None,
+                    "to_doctor_id": item.to_doctor_id, "to_doctor_name": new_doctor.full_name if new_doctor else None,
+                    "requested_by": item.requested_by, "requested_by_name": requester.full_name if requester else None,
+                    "reason": item.reason, "created_at": item.created_at})
+    return out
+
+
+class ReassignmentDecisionIn(BaseModel):
+    comment: str = Field(default="", max_length=1000)
+
+
+@router.post("/attending-requests/{rid}/approve")
+def approve_reassignment(rid: int, data: ReassignmentDecisionIn, request: Request,
+                         user: User = Depends(admin_only), db: Session = Depends(get_db)):
+    item = db.get(PatientReassignmentRequest, rid)
+    if not item or item.status != "pending":
+        raise HTTPException(404, "Ожидающий запрос не найден")
+    if item.requested_by == user.id:
+        raise HTTPException(403, "Запрос должен подтвердить другой администратор")
+    patient = db.get(Patient, item.patient_id)
+    target = db.get(User, item.to_doctor_id)
+    if not patient or patient.erased_at:
+        item.status, item.decided_by, item.decided_at = "rejected", user.id, now()
+        item.decision_comment = "Пациент удалён или недоступен"
+        db.commit()
+        raise HTTPException(409, "Пациент недоступен; запрос отклонён")
+    if patient.doctor_id != item.from_doctor_id:
+        raise HTTPException(409, "Лечащий врач пациента уже изменился; создайте новый запрос")
+    if not target or target.role != "doctor" or not target.active:
+        raise HTTPException(409, "Целевой врач больше не активен")
+    old = patient.doctor_id
+    patient.doctor_id = target.id
+    item.status, item.decided_by, item.decided_at = "approved", user.id, now()
+    item.decision_comment = data.comment or None
+    auth.audit(db, user, "attending_changed", "patient", patient.id, patient_id=patient.id,
+               ip=auth.client_ip(request), request_id=item.id, from_doctor=old, to_doctor=target.id,
+               requested_by=item.requested_by)
+    db.commit()
+    return {"ok": True, "doctor_id": target.id, "status": item.status}
+
+
+@router.post("/attending-requests/{rid}/reject")
+def reject_reassignment(rid: int, data: ReassignmentDecisionIn, request: Request,
+                        user: User = Depends(admin_only), db: Session = Depends(get_db)):
+    item = db.get(PatientReassignmentRequest, rid)
+    if not item or item.status != "pending":
+        raise HTTPException(404, "Ожидающий запрос не найден")
+    if item.requested_by == user.id:
+        raise HTTPException(403, "Запрос должен рассмотреть другой администратор")
+    item.status, item.decided_by, item.decided_at = "rejected", user.id, now()
+    item.decision_comment = data.comment or "Отклонено без комментария"
+    auth.audit(db, user, "attending_reassignment_rejected", "patient_reassignment_request", item.id,
+               patient_id=item.patient_id, ip=auth.client_ip(request), requested_by=item.requested_by)
+    db.commit()
+    return {"ok": True, "status": item.status}
 
 
 # --- журнал -------------------------------------------------------------------

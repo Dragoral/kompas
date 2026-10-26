@@ -78,3 +78,18 @@ def test_catalogues_available_to_authors(client, tokens):
     assert "request_scale" in {a["name"] for a in client.get("/api/knowledge/actions", headers=doc).json()}
     assert client.get("/api/knowledge/schemas/scale", headers=doc).json()["required"]
     assert client.get("/api/knowledge/variables", headers=tokens["patient1"]).status_code == 403
+
+
+def test_unverified_clinical_knowledge_is_reported(client, tokens):
+    from app.engine import knowledge
+    from app.db import SessionLocal
+
+    with SessionLocal() as db:
+        kb = knowledge.get(db)
+        issues = set(knowledge.unverified_clinical_items(kb))
+    assert "scale:PHQ9" in issues
+    assert "rules:routing" in issues
+    assert "rules:alerts" in issues
+    assert "drug:sertraline" in issues
+    assert "drug:aviandr" not in issues
+    assert "guideline:kr301" not in issues

@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
 from . import errors, jobs, observability
@@ -38,8 +39,24 @@ async def lifespan(app: FastAPI):
         if not IS_SQLITE:
             conn.exec_driver_sql("SELECT pg_advisory_xact_lock(724001)")
         Base.metadata.create_all(conn)
+        # create_all не меняет существующие таблицы: добавить поле повторной проверки TOTP.
+        user_columns = {col["name"] for col in inspect(conn).get_columns("users")}
+        if "totp_last_step" not in user_columns:
+            conn.exec_driver_sql("ALTER TABLE users ADD COLUMN totp_last_step BIGINT")
+        if "must_change_password" not in user_columns:
+            conn.exec_driver_sql("ALTER TABLE users ADD COLUMN must_change_password BOOLEAN NOT NULL DEFAULT FALSE")
         with Session(bind=conn) as db:
             knowledge.seed(db)
+            unverified_knowledge = knowledge.unverified_clinical_items(knowledge.get(db))
+    if APP_ENV == "production" and unverified_knowledge:
+        preview = ", ".join(unverified_knowledge[:12])
+        extra = f" (и ещё {len(unverified_knowledge) - 12})" if len(unverified_knowledge) > 12 else ""
+        log.critical("clinical knowledge has not been verified: %s%s", preview, extra)
+        raise SystemExit(
+            "APP_ENV=production: есть непроверенные клинические справочники. "
+            "Проверьте их по официальным источникам, измените флаг verified только после рецензии; "
+            "для синтетической локальной демонстрации используйте APP_ENV=development."
+        )
     await bus.start()
     tasks = jobs.start()
     log.info("started", extra={"event": "startup", "component": f"env={APP_ENV}"})

@@ -1,3 +1,4 @@
+import { enqueueOfflineMutation } from './offlineQueue'
 const TOKEN_KEY = 'kompas.token'
 
 export interface FieldError {
@@ -52,6 +53,10 @@ export async function request<T>(method: string, path: string, body?: unknown): 
   try {
     res = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })
   } catch {
+    if (method.toUpperCase() === 'POST') {
+      const queued = await enqueueOfflineMutation(path, body)
+      if (queued) return queued as T
+    }
     throw new ApiError(0, 'Нет связи с сервером. Проверьте подключение.', null)
   }
 

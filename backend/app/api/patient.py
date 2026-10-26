@@ -293,7 +293,11 @@ def export(request: Request, user: User = Depends(patient_only), db: Session = D
 
 @router.get("/me/stream")
 async def stream(ticket: str, request: Request, last_event_id: int | None = None, db: Session = Depends(get_db)):
-    user = auth.redeem_ticket(ticket, db)
+    def _redeem_in_worker(value: str):
+        from ..db import SessionLocal
+        with SessionLocal() as ticket_db:
+            return auth.redeem_ticket(value, ticket_db)
+    user = await asyncio.to_thread(_redeem_in_worker, ticket)
     if user.role != "patient":
         raise HTTPException(403, "Недостаточно прав")
     p = auth.own_patient(user, db)

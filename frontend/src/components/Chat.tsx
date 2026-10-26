@@ -12,15 +12,20 @@ export function Chat({ path, stream, me }: { path: string; stream: string; me: '
   const state = useApi<Message[]>(path)
   const { reload } = state
   const [text, setText] = useState('')
-  const send = useAction(() => api.post<{ crisis?: boolean }>(path, { text: text.trim(), client_id: crypto.randomUUID() }))
+  const send = useAction(() => api.post<{ crisis?: boolean; queued_offline?: boolean }>(path, { text: text.trim(), client_id: crypto.randomUUID() }))
   const [crisis, setCrisis] = useState(false)
+  const [queuedOffline, setQueuedOffline] = useState(false)
 
   useEffect(() => subscribe(stream, ['message'], reload), [stream, reload])
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault()
     const r = await send.run()
-    if (r) {
+    if (r?.queued_offline) {
+      setQueuedOffline(true)
+      setText('')
+    } else if (r) {
+      setQueuedOffline(false)
       setText('')
       setCrisis(!!r.crisis)
       reload()
@@ -29,9 +34,10 @@ export function Chat({ path, stream, me }: { path: string; stream: string; me: '
 
   return (
     <>
+      {queuedOffline && me === 'patient' && <p className="message" role="status">Сообщение сохранено локально и ещё не доставлено врачу. Оно будет отправлено после восстановления соединения.</p>}
       {crisis && (
         <p className="message message-error" role="alert">
-          Врач получил срочное оповещение. Если вам сейчас плохо, позвоните 112.
+          Система сформировала срочный сигнал, но это не подтверждает, что врач уже увидел его. Если есть непосредственная опасность, не ждите ответа в чате — звоните 112 или 103.
         </p>
       )}
       <Loader state={state}>

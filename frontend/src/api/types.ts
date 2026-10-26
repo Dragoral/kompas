@@ -9,7 +9,10 @@ export interface User {
   full_name: string
   specialty: string | null
   is_duty: boolean
+  is_reviewer: boolean
   mfa_enabled: boolean
+  mfa_setup_required: boolean
+  must_change_password: boolean
 }
 
 export interface LoginResponse {
@@ -75,10 +78,17 @@ export interface Alert {
 export interface ClinicalAction {
   id: number
   patient_id: number
+  patient_name?: string
   kind: string
   level: ReferralLevel | null
   title: string
   status: string
+  payload?: Record<string, unknown> | null
+  sources?: string[]
+  due_at?: string | null
+  alert_id?: number | null
+  decided_at?: string | null
+  comment?: string | null
   created_at: string
 }
 
@@ -124,6 +134,7 @@ export interface PatientCard {
   prescriptions: Prescription[]
   alerts: Alert[]
   actions: ClinicalAction[]
+  adverse_events: { id: number; title: string; intensity: string; serious: boolean; life_threatening: boolean; expected: boolean | null; description: string | null; status: string; created_at: string }[]
   assignments: { id: number; scale_code: string; every_days: number | null; next_due: string | null; reason: string | null }[]
   history: History
 }
@@ -160,11 +171,38 @@ export interface DrugAssessment {
   cautions: Finding[]
   interactions: Finding[]
   note: string
+  verified: boolean
+}
+
+export interface GuidelineStep {
+  guideline: string
+  guideline_title: string
+  kr_id: string
+  section: string
+  text: string
+  evidence: string
+  url: string
+  action?: string
+}
+
+export interface GuidelineEvaluation {
+  code: string
+  kr_id: string
+  title: string
+  status: string
+  published: string
+  verified: boolean
+  url: string
+  line: { line: number; title?: string | null; failed: Record<string, string[]> }
+  response: { scale?: string | null; score?: number; change_pct?: number | null; response?: boolean; remission?: boolean; source?: string }
+  next_steps: GuidelineStep[]
+  quality: { id: string; text: string; met: boolean | null }[]
 }
 
 export interface Recommendations {
   drugs: DrugAssessment[]
   routing: { routes: Route[]; verified: boolean } | null
+  guidelines: GuidelineEvaluation[]
   guidelines_note: string | null
 }
 
@@ -186,6 +224,7 @@ export interface ScaleItem {
 export interface ScaleDefinition {
   code: string
   title: string
+  verified: boolean
   respondent: 'patient' | 'clinician'
   period?: string
   options?: ScaleOption[]
@@ -197,6 +236,8 @@ export interface ScaleResult {
   score: number
   band: string | null
   crisis: boolean
+  queued_offline?: boolean
+  client_id?: string
 }
 
 export interface Overview {

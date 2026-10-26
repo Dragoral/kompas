@@ -51,7 +51,12 @@ def summary(days: int = Query(90, ge=7, le=3650), k: int = Query(K_MIN, ge=K_MIN
     by_drug: dict[str, dict] = {}
     adherence = []
     for p in patients:
-        dx = next((d["icd10"] for d in p.diagnoses if d.get("primary")), (p.diagnoses or [{"icd10": "—"}])[0]["icd10"])
+        # Legacy JSON rows may predate API validation; malformed entries must not
+        # take down the whole clinic analytics view.
+        diagnoses = [d for d in (p.diagnoses or [])
+                     if isinstance(d, dict) and isinstance(d.get("icd10"), str) and d["icd10"].strip()]
+        dx = next((d["icd10"].strip() for d in diagnoses if d.get("primary")),
+                  diagnoses[0]["icd10"].strip() if diagnoses else "—")
         by_dx[_group(dx)] = by_dx.get(_group(dx), 0) + 1
         ctx = context.build(db, p)
         if ctx["adherence"]["pct_14d"] is not None:

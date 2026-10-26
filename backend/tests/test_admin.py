@@ -35,13 +35,43 @@ def test_knowledge_change_requires_clinical_approval(client, tokens):
 def test_user_management_and_reassignment(client, tokens):
     adm = tokens["admin"]
     r = client.post("/api/admin/users", headers=adm, json={"login": "newdoc", "full_name": "Новый Врач Тестович", "role": "doctor", "specialty": "therapist"}).json()
-    h = {"Authorization": f"Bearer {client.post('/api/auth/login', json={'login': 'newdoc', 'password': r['temporary_password']}).json()['token']}"}
+    login = client.post('/api/auth/login', json={'login': 'newdoc', 'password': r['temporary_password']}).json()
+    h = {"Authorization": f"Bearer {login['token']}"}
+    # Временный пароль блокирует клинические данные до обязательной смены.
+    assert client.get("/api/doctor/patients", headers=h).status_code == 403
+    assert client.post('/api/auth/password', headers=h, json={
+        'old_password': r['temporary_password'], 'new_password': 'Safe-Test-Password-9482'
+    }).status_code == 200
+    h = {"Authorization": f"Bearer {client.post('/api/auth/login', json={'login': 'newdoc', 'password': 'Safe-Test-Password-9482'}).json()['token']}"}
     assert client.get("/api/doctor/patients", headers=h).json() == []
+
+    # Второй администратор подтверждает перевод пациента, чтобы один человек
+    # не мог единолично менять лечащего врача.
+    a2 = client.post('/api/admin/users', headers=adm, json={
+        'login': 'adminsecond', 'full_name': 'Второй Администратор', 'role': 'admin'
+    }).json()
+    a2login = client.post('/api/auth/login', json={'login': 'adminsecond', 'password': a2['temporary_password']}).json()
+    a2h = {'Authorization': f"Bearer {a2login['token']}"}
+    assert client.post('/api/auth/password', headers=a2h, json={
+        'old_password': a2['temporary_password'], 'new_password': 'Safe-Admin-Password-9482'
+    }).status_code == 200
+    a2h = {'Authorization': f"Bearer {client.post('/api/auth/login', json={'login': 'adminsecond', 'password': 'Safe-Admin-Password-9482'}).json()['token']}"}
+
     p = pid(client, tokens, "psychiatrist", "P-DEMO6")
-    assert client.post(f"/api/admin/patients/{p}/attending", headers=adm, json={"doctor_id": r["id"], "reason": "смена участка"}).status_code == 200
+    request = client.post(f"/api/admin/patients/{p}/attending", headers=adm,
+                          json={"doctor_id": r["id"], "reason": "смена участка"})
+    assert request.status_code == 200 and request.json()['status'] == 'pending'
+    assert client.get(f"/api/doctor/patients/{p}", headers=h).status_code == 403
+    assert client.post(f"/api/admin/attending-requests/{request.json()['request_id']}/approve",
+                       headers=a2h, json={'comment': 'проверено'}).status_code == 200
     assert client.get(f"/api/doctor/patients/{p}", headers=h).status_code == 200
     assert client.get(f"/api/doctor/patients/{p}", headers=tokens["psychiatrist"]).status_code == 403
-    client.post(f"/api/admin/patients/{p}/attending", headers=adm, json={"doctor_id": 1, "reason": "вернуть"})
+
+    back = client.post(f"/api/admin/patients/{p}/attending", headers=a2h,
+                       json={"doctor_id": 1, "reason": "вернуть прежнего врача"})
+    assert back.status_code == 200
+    assert client.post(f"/api/admin/attending-requests/{back.json()['request_id']}/approve",
+                       headers=adm, json={'comment': 'возврат согласован'}).status_code == 200
     client.patch(f"/api/admin/users/{r['id']}", headers=adm, json={"active": False})
     assert client.get("/api/auth/me", headers=h).status_code == 401  # блокировка — сессии отозваны
 
@@ -80,3 +110,13 @@ def test_doctor_working_hours_validated_and_saved(client, tokens):
     ok = client.patch(f"/api/admin/users/{uid}", headers=adm, json={"working_hours": {"days": [5, 1, 1], "start": "08:00", "end": "16:00"}})
     assert ok.json()["working_hours"] == {"days": [1, 5], "start": "08:00", "end": "16:00"}
     assert client.patch(f"/api/admin/users/{uid}", headers=adm, json={"working_hours": None}).json()["working_hours"] is None
+
+
+def test_admin_cannot_mutate_patient_account(client, tokens):
+    from app.models import Patient, User
+    from app.db import SessionLocal
+    with SessionLocal() as db:
+        patient = db.query(Patient).filter(Patient.code == "P-DEMO1").one()
+        uid = patient.user_id
+    assert client.patch(f"/api/admin/users/{uid}", headers=tokens["admin"], json={"active": False}).status_code == 403
+    assert client.post(f"/api/admin/users/{uid}/reset-password", headers=tokens["admin"]).status_code == 403

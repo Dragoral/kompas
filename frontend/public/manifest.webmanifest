@@ -1,0 +1,13 @@
+{
+  "id": "/",
+  "name": "Клинический компас",
+  "short_name": "Компас",
+  "description": "Рабочее пространство сопровождения пациента",
+  "lang": "ru",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5f8fc",
+  "theme_color": "#172b40",
+  "icons": [{"src": "/kompas-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}]
+}

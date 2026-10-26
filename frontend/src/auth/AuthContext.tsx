@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { api, getToken, setToken, setUnauthorizedHandler } from '../api/client'
 import type { LoginResponse, User } from '../api/types'
+import { setOfflineQueueUser } from '../api/offlineQueue'
 
 interface AuthState {
   user: User | null
@@ -16,13 +17,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(() => getToken() !== null)
 
   useEffect(() => {
+    setOfflineQueueUser(user?.role === 'patient' ? user.id : null)
+  }, [user?.id, user?.role])
+
+  useEffect(() => {
     setUnauthorizedHandler(() => {
       setToken(null)
       setUser(null)
     })
     if (!getToken()) return
     api.get<User>('/api/auth/me')
-      .then(setUser)
+      .then((u) => { setUser(u); setOfflineQueueUser(u.role === 'patient' ? u.id : null) })
       .catch(() => setToken(null))
       .finally(() => setLoading(false))
   }, [])
@@ -31,6 +36,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const res = await api.post<LoginResponse>('/api/auth/login', { login, password, totp: totp || undefined })
     setToken(res.token)
     setUser(res.user)
+    setOfflineQueueUser(res.user.role === 'patient' ? res.user.id : null)
     return res.user
   }, [])
 
@@ -40,6 +46,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       setToken(null)
       setUser(null)
+      setOfflineQueueUser(null)
     }
   }, [])
 

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useAuth } from '../../auth/AuthContext'
 import { Link } from 'react-router-dom'
 import { api } from '../../api/client'
 import type { ValidationResult } from '../../api/types'
@@ -15,13 +16,14 @@ export function ProposeBar({ kind, code, body, pathLabel = (p) => p || '—' }: 
   body: () => unknown
   pathLabel?: (path: string) => string
 }) {
+  const { user } = useAuth()
   const [check, setCheck] = useState<ValidationResult | null>(null)
   const [note, setNote] = useState('')
   const [sent, setSent] = useState<number | null>(null)
   const [json, setJson] = useState<string | null>(null)
   const validate = useAction(() => api.post<ValidationResult>('/api/knowledge/validate', { kind, body: body() }))
-  const propose = useAction(() =>
-    api.put<{ draft_id: number }>(`/api/knowledge/${kind}/${encodeURIComponent(code)}`, { body: body(), change_note: note }))
+  const proposalPath = user?.role === 'admin' ? `/api/admin/knowledge/${kind}/${encodeURIComponent(code)}` : `/api/knowledge/${kind}/${encodeURIComponent(code)}`
+  const propose = useAction(() => api.put<{ draft_id: number }>(proposalPath, { body: body(), change_note: note }))
 
   if (sent !== null) {
     return (

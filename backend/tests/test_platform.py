@@ -36,7 +36,9 @@ def test_body_size_limit(client, tokens):
 
 def test_ready_and_admin_system(client, tokens):
     r = client.get("/api/ready")
-    assert r.status_code == 200 and r.json()["checks"]["database"]["ok"]
+    assert r.status_code == 200 and r.json() == {"status": "ready"}
+    # Public readiness endpoint must not disclose component diagnostics or task errors.
+    assert "checks" not in r.json() and "last_error" not in r.text
     s = client.get("/api/admin/system", headers=tokens["admin"]).json()
     assert {"checks", "components", "problems", "queues"} <= set(s)
     assert client.get("/api/admin/system", headers=tokens["psychiatrist"]).status_code == 403
@@ -47,3 +49,17 @@ def test_broken_rule_does_not_break_request_and_is_reported():
     assert logic.safe_eval({"unknown_op": [1, 2]}, {}, "test:broken") is False
     probs = observability.problems(500)
     assert len(probs) == before + 1 and probs[0]["ref"] == "test:broken"
+
+
+def test_ready_hides_internal_diagnostics(client, monkeypatch):
+    from app.api import system
+
+    monkeypatch.setattr(system, "_checks", lambda _db: {
+        "job:notification_sender": {"ok": False, "last_error": "secret internal failure"},
+        "database": {"ok": True},
+    })
+    r = client.get("/api/ready")
+    assert r.status_code == 503
+    assert "secret internal failure" not in r.text
+    assert "job:notification_sender" not in r.text
+    assert r.json()["detail"] == "Сервис временно не готов"

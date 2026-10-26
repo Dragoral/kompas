@@ -5,11 +5,15 @@ import { useAction } from '../../../api/useApi'
 import { ErrorMessage } from '../../../components/ErrorMessage'
 import { formatDateTime, LEVEL_LABEL, SEVERITY_LABEL } from '../../../format'
 import { usePatient } from './PatientLayout'
+import { VisitsHistory } from './VisitsHistory'
 
 export function OverviewTab() {
   const { id, card, reload } = usePatient()
   const visit = useAction(() => api.post(`/api/doctor/patients/${id}/visit`))
   const monitoring = useAction((active: boolean) => api.post(`/api/doctor/patients/${id}/monitoring`, { active }))
+  const resetPatientPassword = useAction(() => api.post<{ temporary_password: string }>(`/api/doctor/patients/${id}/reset-patient-password`))
+  const reviewAdverseEvent = useAction((eventId: number) => api.post(`/api/doctor/adverse-events/${eventId}/review`))
+  const [temporaryPassword, setTemporaryPassword] = useState<string | null>(null)
 
   const openAlerts = card.alerts.filter((a) => a.status !== 'resolved')
   const proposed = card.actions.filter((a) => a.status === 'proposed')
@@ -17,6 +21,7 @@ export function OverviewTab() {
   return (
     <>
       <Summary id={id} />
+      <VisitsHistory patientId={id} onCreated={reload} />
       <section aria-labelledby="alerts-h">
         <h2 id="alerts-h">Оповещения</h2>
         {openAlerts.length === 0 ? <p>Открытых оповещений нет.</p> : openAlerts.map((a) => (
@@ -29,6 +34,21 @@ export function OverviewTab() {
         <p className="muted">Система только предлагает. Решение принимает врач.</p>
         {proposed.length === 0 ? <p>Нет предложений, ожидающих решения.</p> : proposed.map((a) => (
           <ActionItem key={a.id} action={a} onChange={reload} />
+        ))}
+      </section>
+
+      <section aria-labelledby="adverse-events-h">
+        <h2 id="adverse-events-h">Нежелательные реакции</h2>
+        {card.adverse_events.length === 0 ? <p>Зарегистрированных нежелательных реакций нет.</p> : card.adverse_events.map((event) => (
+          <article key={event.id} className={`panel ${event.serious || event.life_threatening ? 'panel-critical' : ''}`}>
+            <div className="feature-card-heading"><strong>{event.title}</strong><span className={`badge ${event.life_threatening ? 'badge-critical' : event.serious ? 'badge-high' : 'badge-medium'}`}>{event.life_threatening ? 'Угроза жизни' : event.serious ? 'Серьёзная реакция' : event.intensity}</span></div>
+            <p className="muted small">{formatDateTime(event.created_at)} · {event.expected === null ? 'Ожидаемость не установлена' : event.expected ? 'Ожидаемая по инструкции' : 'Неожидаемая'}</p>
+            {event.description && <p>{event.description}</p>}
+            {event.status === 'reviewed' ? <p className="message" role="status">Врачебный разбор зафиксирован.</p> : <>
+              <ErrorMessage error={reviewAdverseEvent.error} />
+              <button type="button" className="secondary" disabled={reviewAdverseEvent.pending} onClick={async () => { if (window.confirm('Зафиксировать, что нежелательная реакция рассмотрена врачом?') && await reviewAdverseEvent.run(event.id)) reload() }}>Отметить как рассмотренную</button>
+            </>}
+          </article>
         ))}
       </section>
 
@@ -50,6 +70,22 @@ export function OverviewTab() {
           </button>
         </div>
         <p className="muted small">Дистанционное наблюдение назначается после очного приёма (приказ Минздрава России № 193н).</p>
+      </section>
+
+      <section aria-labelledby="patient-access-h">
+        <h2 id="patient-access-h">Доступ пациента</h2>
+        <p className="muted">При утрате доступа можно выдать новый временный пароль. После входа пациент обязан заменить его; передавайте пароль только защищённым каналом.</p>
+        {temporaryPassword && <div className="message" role="status">
+          <p>Новый временный пароль: <code>{temporaryPassword}</code></p>
+          <button type="button" className="secondary" onClick={() => setTemporaryPassword(null)}>Скрыть пароль</button>
+        </div>}
+        <ErrorMessage error={resetPatientPassword.error} />
+        <button type="button" className="secondary" disabled={resetPatientPassword.pending}
+          onClick={async () => {
+            if (!window.confirm('Завершить активные сеансы пациента и выдать новый временный пароль?')) return
+            const result = await resetPatientPassword.run()
+            if (result) setTemporaryPassword(result.temporary_password)
+          }}>Выдать временный пароль</button>
       </section>
     </>
   )
@@ -113,6 +149,14 @@ function ActionItem({ action, onChange }: { action: ClinicalAction; onChange: ()
         )}
       </p>
       <p className="muted small">{formatDateTime(action.created_at)}</p>
+      {action.payload?.urgency && <p><strong>Срочность:</strong> {String(action.payload.urgency)}</p>}
+      {Array.isArray(action.payload?.reasons) && action.payload.reasons.length > 0 && <div>
+        <strong>Основания маршрутизации</strong>
+        <ul>{(action.payload.reasons as { title?: string; source?: string; id?: string }[]).map((reason, i) => <li key={reason.id ?? i}>
+          {String(reason.title ?? 'Основание')}{reason.source ? <span className="muted small"> — {reason.source}</span> : null}
+        </li>)}</ul>
+      </div>}
+      {(action.sources?.length ?? 0) > 0 && <p className="muted small">Источники: {action.sources!.join('; ')}</p>}
       {action.kind === 'pv_report' && <PvReport actionId={action.id} />}
       <label>
         Комментарий

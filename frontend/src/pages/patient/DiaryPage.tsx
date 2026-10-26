@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { Link } from 'react-router-dom'
 import { api } from '../../api/client'
 import { useAction } from '../../api/useApi'
 import { ErrorMessage } from '../../components/ErrorMessage'
@@ -14,10 +15,13 @@ const SCALES = [
   { name: 'sleep_quality', label: 'Качество сна', hint: '0 — очень плохое, 10 — отличное' },
 ] as const
 
+const SCORE_VALUES = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
 export function DiaryPage() {
   const [form, setForm] = useState<Record<string, string>>({ mood: '5', anxiety: '5', sleep_quality: '5', sleep_hours: '', note: '' })
   const [saved, setSaved] = useState(false)
-  const submit = useAction(() => api.post('/api/me/diary', {
+  const [queuedOffline, setQueuedOffline] = useState(false)
+  const submit = useAction(() => api.post<{ queued_offline?: boolean }>('/api/me/diary', {
     day: today(),
     mood: Number(form.mood),
     anxiety: Number(form.anxiety),
@@ -30,7 +34,13 @@ export function DiaryPage() {
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault()
     setSaved(false)
-    if (await submit.run()) setSaved(true)
+    setQueuedOffline(false)
+    const result = await submit.run()
+    if (result?.queued_offline) setQueuedOffline(true)
+    else if (result) {
+      setSaved(true)
+      try { localStorage.setItem(`kompas.diary.done.${today()}`, '1') } catch { /* ignore */ }
+    }
   }
 
   const set = (name: string, value: string) => setForm({ ...form, [name]: value })
@@ -38,27 +48,43 @@ export function DiaryPage() {
   return (
     <>
       <h1>Дневник самочувствия</h1>
-      <form className="form" onSubmit={onSubmit}>
+      <form className="form diary-form" onSubmit={onSubmit}>
         {SCALES.map((s) => (
-          <label key={s.name}>
-            {s.label}: <output>{form[s.name]}</output>
-            <input type="range" min={0} max={10} step={1} value={form[s.name]}
-                   aria-describedby={`${s.name}-hint`} onChange={(e) => set(s.name, e.target.value)} />
-            <span id={`${s.name}-hint`} className="muted small">{s.hint}</span>
-          </label>
+          <div key={s.name} className="diary-scale-block">
+            <div className="diary-scale-head">
+              <span className="diary-scale-label">{s.label}</span>
+              <span className="diary-scale-value" aria-live="polite">{form[s.name]}</span>
+            </div>
+            <p className="diary-scale-hint">{s.hint}</p>
+            <div className="score-circles" role="group" aria-label={s.label}>
+              {SCORE_VALUES.map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  className={`score-circle${form[s.name] === String(n) ? ' score-circle-active' : ''}`}
+                  aria-label={`${s.label}: ${n}`}
+                  aria-pressed={form[s.name] === String(n)}
+                  onClick={() => set(s.name, String(n))}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+          </div>
         ))}
-        <label>
+        <label className="diary-field">
           Сон, часов
           <input type="number" min={0} max={24} step={0.5} value={form.sleep_hours}
                  onChange={(e) => set('sleep_hours', e.target.value)} />
         </label>
-        <label>
+        <label className="diary-field">
           Заметка
           <textarea rows={4} maxLength={4000} value={form.note} onChange={(e) => set('note', e.target.value)} />
         </label>
         <ErrorMessage error={submit.error} />
-        {saved && <p className="message" role="status">Запись сохранена.</p>}
-        <button type="submit" disabled={submit.pending}>Сохранить</button>
+        {queuedOffline && <p className="message" role="status">Запись сохранена на устройстве и будет отправлена при появлении связи.</p>}
+        {saved && <p className="message" role="status">Дневник сохранён. <Link to="/me">На главную</Link></p>}
+        <button type="submit" disabled={submit.pending}>{submit.pending ? 'Сохранение…' : 'Сохранить'}</button>
       </form>
     </>
   )

@@ -1,5 +1,9 @@
 import { Link } from 'react-router-dom'
+import { useState } from 'react'
 import { useAuth } from '../../auth/AuthContext'
+import { api } from '../../api/client'
+import { useAction } from '../../api/useApi'
+import { ErrorMessage } from '../../components/ErrorMessage'
 import type { KnowledgeRow } from '../../api/types'
 import { useApi } from '../../api/useApi'
 import { Loader } from '../../components/Loader'
@@ -25,7 +29,9 @@ export function editorPath(kind: string, code: string): string | null {
 
 export function KnowledgePage() {
   const { user } = useAuth()
-  const state = useApi<KnowledgeRow[]>('/api/knowledge')
+  const state = useApi<KnowledgeRow[]>(user?.role === 'admin' ? '/api/admin/knowledge' : '/api/knowledge')
+  const [reloadResult, setReloadResult] = useState<number | null>(null)
+  const reloadYaml = useAction(() => api.post<{ drafts: number }>('/api/admin/knowledge/reload'))
 
   return (
     <>
@@ -33,11 +39,12 @@ export function KnowledgePage() {
       <p>
         Изменения справочников вступают в силу после одобрения врачом-рецензентом. Автор изменения не может одобрить его сам.
       </p>
+      {user?.role === 'admin' && <section className="feature-card"><h2>Загрузка обновлений YAML</h2><p className="muted">Изменения из файлов репозитория будут оформлены как черновики для последующего согласования; этот процесс не активирует их автоматически.</p><ErrorMessage error={reloadYaml.error} />{reloadResult !== null && <p className="message" role="status">Создано черновиков: {reloadResult}</p>}<button type="button" disabled={reloadYaml.pending} onClick={async () => { if (window.confirm('Сравнить YAML-файлы с базой знаний и предложить изменения черновиками?')) { const r = await reloadYaml.run(); if (r) { setReloadResult(r.drafts); state.reload() } } }}>{reloadYaml.pending ? 'Проверяем…' : 'Проверить YAML и создать черновики'}</button></section>}
       <ul className="actions">
         <li><Link to="/knowledge/scales/new">Создать шкалу</Link></li>
         <li><Link to="/knowledge/import">Импортировать шкалу (CSV, FHIR)</Link></li>
         <li><Link to="/knowledge/drugs/new">Добавить препарат</Link></li>
-        {user?.role === 'doctor' && <li><Link to="/knowledge/review">Изменения на рассмотрении</Link></li>}
+        {user?.role === 'doctor' && user.is_reviewer && <li><Link to="/knowledge/review">Изменения на рассмотрении</Link></li>}
       </ul>
       <Loader state={state}>
         {(rows) => (
@@ -69,6 +76,7 @@ export function KnowledgePage() {
                     <td className="nowrap">
                       {editorPath(r.kind, r.code) && <><Link to={editorPath(r.kind, r.code)!}>Изменить</Link> · </>}
                       <Link to={`/knowledge/${r.kind}/${encodeURIComponent(r.code)}/json`}>JSON</Link>
+                      {r.kind === 'scale' && <> · <FhirScaleExport code={r.code} /></>}
                       {user?.role === 'admin' && (
                         <> · <Link to={`/knowledge/${r.kind}/${encodeURIComponent(r.code)}/versions`}>Версии</Link></>
                       )}
@@ -82,4 +90,20 @@ export function KnowledgePage() {
       </Loader>
     </>
   )
+}
+
+
+function FhirScaleExport({ code }: { code: string }) {
+  const exportScale = useAction(() => api.get<unknown>(`/api/knowledge/scales/${encodeURIComponent(code)}/fhir`))
+  const run = async () => {
+    const resource = await exportScale.run()
+    if (!resource) return
+    const url = URL.createObjectURL(new Blob([JSON.stringify(resource, null, 2)], { type: 'application/fhir+json' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${code}-questionnaire.fhir.json`
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+  return <><button type="button" className="link-button" disabled={exportScale.pending} onClick={run}>FHIR</button><ErrorMessage error={exportScale.error} /></>
 }

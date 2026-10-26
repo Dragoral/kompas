@@ -41,16 +41,29 @@ def process(db: Session, patient: Patient, trigger_ref: str, received_at: dateti
     ctx = context.build(db, patient)
     created: list[Alert] = []
 
-    open_alerts = db.scalars(select(Alert).where(Alert.patient_id == patient.id, Alert.status != "resolved")).all()
-    open_by_rule = {a.rule_id: a for a in open_alerts}
+    alert_history = db.scalars(
+        select(Alert).where(Alert.patient_id == patient.id).order_by(Alert.created_at.desc(), Alert.id.desc())
+    ).all()
+    open_alerts = [a for a in alert_history if a.status != "resolved"]
+    open_by_rule = {}
+    latest_by_rule = {}
+    for a in alert_history:  # результат уже отсортирован от нового к старому
+        latest_by_rule.setdefault(a.rule_id, a)
+        if a.status != "resolved":
+            open_by_rule.setdefault(a.rule_id, a)
 
     for rule in kb["rules"].get("alerts", {}).get("rules", []):
         if rule["id"] in suppress or not logic.safe_eval(rule["when"], ctx, f"alerts:{rule.get('id')}"):
             continue
         existing = open_by_rule.get(rule["id"])
-        # Открытый алерт не дублируется. Критический повторяется, только если появились
-        # новые данные, на которые опирается правило (новый ответ, новое высказывание)
+        latest = latest_by_rule.get(rule["id"])
+        # Закрытый алерт не создаётся заново на тех же данных. Новый алерт допустим
+        # только когда источник правила обновился после закрытия предыдущего.
         if existing and not (rule["severity"] == "critical" and _new_evidence(rule, ctx, existing)):
+            continue
+        if existing and rule["severity"] != "critical":
+            continue
+        if not existing and latest and latest.status == "resolved" and not _new_evidence(rule, ctx, latest):
             continue
         actions = rule.get("actions", [])
         alert = Alert(
@@ -72,6 +85,10 @@ def process(db: Session, patient: Patient, trigger_ref: str, received_at: dateti
         alert.message = logic.render(rule.get("message", rule["title"]), ctx)
         _run_actions(db, patient, alert, actions)
         created.append(alert)
+        # Если несколько новых критических событий поступили в одном пересчёте,
+        # учитываем уже созданный алерт как открытый, не создавая дубль тем же проходом.
+        open_by_rule[rule["id"]] = alert
+        latest_by_rule[rule["id"]] = alert
 
     _sync_referral(db, patient, ctx, kb)
     patient.risk_score = risk_score(ctx, open_alerts + created)
@@ -109,14 +126,28 @@ def emit(db: Session, channel: str, event: str, data: dict) -> None:
 
 def _propose(kind: str, title: str):
     def act(db: Session, patient: Patient, alert: Alert, arg) -> None:
-        dup = db.scalar(select(ClinicalAction).where(ClinicalAction.patient_id == patient.id, ClinicalAction.kind == kind,
-                                                     ClinicalAction.status == "proposed"))
+        source_ae_id = None
+        if kind == "pv_report" and alert.trigger_ref and alert.trigger_ref.startswith("ae:"):
+            try:
+                source_ae_id = int(alert.trigger_ref.split(":", 1)[1])
+            except ValueError:
+                source_ae_id = None
+        stmt = select(ClinicalAction).where(
+            ClinicalAction.patient_id == patient.id,
+            ClinicalAction.kind == kind,
+            ClinicalAction.status == "proposed",
+        )
+        if source_ae_id is not None:
+            stmt = stmt.where(ClinicalAction.payload["adverse_event_id"].as_integer() == source_ae_id)
+        dup = db.scalar(stmt)
         if dup:
             return
-        # в payload — только ссылка на алерт: его сообщение может цитировать пациента и хранится зашифрованным
+        payload = {"alert_id": alert.id, "rule_id": alert.rule_id}
+        if source_ae_id is not None:
+            payload["adverse_event_id"] = source_ae_id
+        # В payload — только идентификаторы, без свободного текста пациента.
         db.add(ClinicalAction(patient_id=patient.id, kind=kind, title=f"{title}: {alert.title}", alert_id=alert.id,
-                              payload={"alert_id": alert.id, "rule_id": alert.rule_id},
-                              sources=[alert.source] if alert.source else []))
+                              payload=payload, sources=[alert.source] if alert.source else []))
     return act
 
 

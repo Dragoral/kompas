@@ -67,12 +67,14 @@ function PasswordForm() {
 }
 
 function MfaSetup() {
+  const { user, logout } = useAuth()
   const [setup, setSetup] = useState<{ secret: string; otpauth_uri: string } | null>(null)
   const [qr, setQr] = useState('')
   const [code, setCode] = useState('')
+  const [password, setPassword] = useState('')
   const [done, setDone] = useState(false)
   const start = useAction(() => api.post<{ secret: string; otpauth_uri: string }>('/api/auth/mfa/setup'))
-  const confirm = useAction(() => api.post('/api/auth/mfa/confirm', { secret: setup?.secret, code }))
+  const confirm = useAction(() => api.post('/api/auth/mfa/confirm', { secret: setup?.secret, code, old_password: password }))
 
   useEffect(() => {
     if (setup) QRCode.toDataURL(setup.otpauth_uri, { margin: 1, width: 200 }).then(setQr)
@@ -82,7 +84,7 @@ function MfaSetup() {
     return (
       <section aria-labelledby="mfa-h">
         <h2 id="mfa-h">Второй фактор</h2>
-        <p className="message" role="status">Второй фактор подключён. При следующем входе понадобится код из приложения.</p>
+        <p className="message" role="status">Второй фактор подключён. Для следующего входа используйте новый код из приложения после его обновления.</p>
       </section>
     )
   }
@@ -96,10 +98,24 @@ function MfaSetup() {
         <button type="button" className="secondary" disabled={start.pending}
                 onClick={async () => setSetup((await start.run()) ?? null)}>Подключить</button>
       ) : (
-        <form className="form" onSubmit={async (e) => { e.preventDefault(); if (await confirm.run()) setDone(true) }}>
+        <form className="form" onSubmit={async (e) => {
+          e.preventDefault()
+          if (await confirm.run()) {
+            setDone(true)
+            if (user?.mfa_setup_required) {
+              await logout()
+              window.location.assign('/login')
+            }
+          }
+        }}>
           <p>1. Отсканируйте код в приложении или введите ключ вручную.</p>
           {qr && <img src={qr} width={200} height={200} alt="QR-код для приложения-аутентификатора" />}
           <p>Ключ: <code>{setup.secret}</code></p>
+          <label>
+            Текущий пароль
+            <input type="password" autoComplete="current-password" required value={password}
+                   onChange={(e) => setPassword(e.target.value)} />
+          </label>
           <label>
             2. Код из приложения
             <input inputMode="numeric" autoComplete="one-time-code" required pattern="[0-9]{6}" value={code}

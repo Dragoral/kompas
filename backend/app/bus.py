@@ -14,15 +14,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from datetime import timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 log = logging.getLogger("kompas.bus")
-POLL_SEC = 0.05
+POLL_SEC = 0.1
 REPLAY_WINDOW = timedelta(hours=24)
+LOOKBACK_WINDOW = timedelta(seconds=15)
+SEEN_LIMIT = 10_000
 
 
 def doctor_channel(doctor_id: int) -> str:
@@ -47,6 +49,7 @@ class Dispatcher:
     def __init__(self):
         self.subs: dict[str, set[asyncio.Queue]] = defaultdict(set)
         self.last_id = 0
+        self._seen: OrderedDict[int, None] = OrderedDict()
         self._task: asyncio.Task | None = None
 
     async def start(self):
@@ -65,11 +68,31 @@ class Dispatcher:
 
     def _fetch(self) -> list[tuple[int, str, str, dict]]:
         from .db import SessionLocal
-        from .models import Event
+        from .models import Event, now
+        cutoff = now() - LOOKBACK_WINDOW
+        # The main cursor handles normal forward progress. A separate overlapping
+        # query catches lower IDs that committed late; excluding already-seen IDs
+        # in SQL prevents a full overlap window from starving newer events at load.
         with SessionLocal() as db:
-            rows = db.execute(select(Event.id, Event.channel, Event.event, Event.data)
-                              .where(Event.id > self.last_id).order_by(Event.id).limit(1000)).all()
-        return [tuple(r) for r in rows]
+            columns = (Event.id, Event.channel, Event.event, Event.data)
+            current_cursor = self.last_id
+            forward = db.execute(
+                select(*columns).where(Event.id > current_cursor).order_by(Event.id).limit(2000)
+            ).all()
+            late_stmt = select(*columns).where(Event.id <= current_cursor, Event.created_at >= cutoff)
+            seen_ids = list(self._seen.keys())
+            if seen_ids:
+                late_stmt = late_stmt.where(Event.id.not_in(seen_ids))
+            late = db.execute(late_stmt.order_by(Event.created_at, Event.id).limit(2000)).all()
+        rows_by_id = {int(row[0]): tuple(row) for row in (*late, *forward)}
+        fresh = []
+        for ev_id in sorted(rows_by_id):
+            self._seen[ev_id] = None
+            fresh.append(rows_by_id[ev_id])
+            self.last_id = max(self.last_id, ev_id)
+        while len(self._seen) > SEEN_LIMIT:
+            self._seen.popitem(last=False)
+        return fresh
 
     async def _run(self):
         while True:
@@ -77,7 +100,7 @@ class Dispatcher:
                 if self.subs:
                     rows = await asyncio.to_thread(self._fetch)
                     for ev_id, channel, event, data in rows:
-                        self.last_id = ev_id
+                        self.last_id = max(self.last_id, ev_id)
                         for q in list(self.subs.get(channel, ())):
                             if not q.full():
                                 q.put_nowait(_format(ev_id, event, data))

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useAuth } from '../../auth/AuthContext'
 import { Link, useParams } from 'react-router-dom'
 import { useApi } from '../../api/useApi'
 import { Loader } from '../../components/Loader'
@@ -12,11 +13,14 @@ import { ProposeBar } from './ProposeBar'
  */
 export function JsonEditorPage() {
   const { kind = '', code = '' } = useParams()
-  const state = useApi<{ body: unknown; version: number }>(`/api/knowledge/${kind}/${encodeURIComponent(code)}`)
-  return <Loader state={state}>{(r) => <Editor kind={kind} code={code} initial={r.body} version={r.version} />}</Loader>
+  const { user } = useAuth()
+  const base = user?.role === 'admin' ? '/api/admin/knowledge' : '/api/knowledge'
+  const state = useApi<{ body: unknown; version: number }>(`${base}/${kind}/${encodeURIComponent(code)}`)
+  const schema = useApi<unknown>(`/api/knowledge/schemas/${kind}`)
+  return <Loader state={state}>{(r) => <Editor kind={kind} code={code} initial={r.body} version={r.version} schema={schema.data} schemaError={schema.error} schemaLoading={schema.loading} />}</Loader>
 }
 
-function Editor({ kind, code, initial, version }: { kind: string; code: string; initial: unknown; version: number }) {
+function Editor({ kind, code, initial, version, schema, schemaError, schemaLoading }: { kind: string; code: string; initial: unknown; version: number; schema: unknown; schemaError: import('../../api/client').ApiError | null; schemaLoading: boolean }) {
   const [text, setText] = useState(() => JSON.stringify(initial, null, 2))
   const [error, setError] = useState<string | null>(null)
 
@@ -45,6 +49,7 @@ function Editor({ kind, code, initial, version }: { kind: string; code: string; 
         {error && <p className="message message-error" role="alert">{error}</p>}
       </div>
       <ProposeBar kind={kind} code={code} body={parse} />
+      <details className="feature-card"><summary>JSON Schema для этого справочника</summary>{schemaLoading ? <p className="muted">Загрузка схемы…</p> : schemaError ? <p className="message message-error">Не удалось загрузить схему: {schemaError.message}</p> : <pre className="plain-text">{JSON.stringify(schema, null, 2)}</pre>}</details>
     </>
   )
 }

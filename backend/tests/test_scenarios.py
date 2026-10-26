@@ -48,7 +48,14 @@ def test_s3_depression_off_label_requires_doctor_rationale(client, tokens):
     r = client.post(f"/api/doctor/patients/{p}/prescriptions", headers=tokens["therapist"], json={"drug_id": "aviandr"})
     assert r.status_code == 409
     r = client.post(f"/api/doctor/patients/{p}/prescriptions", headers=tokens["therapist"],
-                    json={"drug_id": "aviandr", "acknowledge_off_label": True, "rationale": "Выраженный тревожный компонент, решение врача после очного осмотра"})
+                    json={"drug_id": "aviandr", "acknowledge_off_label": True,
+                          "rationale": "Выраженный тревожный компонент, решение врача после очного осмотра"})
+    assert r.status_code == 422  # для off-label обязательно явно подтвердить режим
+    r = client.post(f"/api/doctor/patients/{p}/prescriptions", headers=tokens["therapist"], json={
+        "drug_id": "aviandr", "acknowledge_off_label": True,
+        "rationale": "Выраженный тревожный компонент, решение врача после очного осмотра",
+        "regimen": {"dose_mg": 20, "times_per_day": 1}
+    })
     assert r.status_code == 200 and r.json()["status"] == "off_label"
 
 
@@ -141,6 +148,12 @@ def test_monitoring_requires_consent_and_in_person_visit(client, tokens):
     assert client.post(f"/api/doctor/patients/{new['id']}/monitoring", headers=tokens["therapist"], json={"active": True}).status_code == 409
     login = client.post("/api/auth/login", json={"login": new["login"], "password": new["temporary_password"]}).json()
     h = {"Authorization": f"Bearer {login['token']}"}
+    # Новому пациенту сначала нужно заменить временный пароль.
+    assert client.post("/api/auth/password", headers=h, json={
+        "old_password": new["temporary_password"], "new_password": "Patient-Test-Password-3492"
+    }).status_code == 200
+    login = client.post("/api/auth/login", json={"login": new["login"], "password": "Patient-Test-Password-3492"}).json()
+    h = {"Authorization": f"Bearer {login['token']}"}
     assert client.post("/api/me/diary", headers=h, json={"day": "2026-10-17", "mood": 5}).status_code == 403  # нет согласия
     c = client.get("/api/consent").json()
     assert client.post("/api/me/consent", headers=h, json={"version": c["version"], "sha256": c["sha256"]}).status_code == 200
@@ -219,3 +232,43 @@ def test_resolved_alert_not_recreated_by_resolve_itself(client, tokens):
     assert client.post(f"/api/doctor/alerts/{a['id']}/resolve", headers=doc, json={"resolution": "Связалась с пациентом"}).status_code == 200
     after = [x for x in client.get("/api/doctor/alerts", headers=doc).json() if x["patient_id"] == p and x["rule_id"] == a["rule_id"]]
     assert after == []
+
+
+def test_prescription_rejects_unmatched_indication_and_oversized_dose(client, tokens):
+    p = pid(client, tokens, "psychiatrist", "P-DEMO1")
+    wrong_indication = client.post(f"/api/doctor/patients/{p}/prescriptions", headers=tokens["psychiatrist"], json={
+        "drug_id": "aviandr", "indication_id": "post_covid_anxiety"
+    })
+    assert wrong_indication.status_code == 422
+    too_high = client.post(f"/api/doctor/patients/{p}/prescriptions", headers=tokens["psychiatrist"], json={
+        "drug_id": "aviandr", "regimen": {"dose_mg": 30, "times_per_day": 2}
+    })
+    assert too_high.status_code == 422
+
+
+def test_prescription_blocks_unverified_drug(client, tokens):
+    p = pid(client, tokens, "therapist", "P-DEMO3")
+    r = client.post(
+        f"/api/doctor/patients/{p}/prescriptions",
+        headers=tokens["therapist"],
+        json={"drug_id": "sertraline", "acknowledge_off_label": True,
+              "rationale": "Проверка регрессионного ограничения для непроверенного справочника",
+              "regimen": {"dose_mg": 25, "times_per_day": 1}},
+    )
+    assert r.status_code == 409
+    assert "не прошли клиническую проверку" in str(r.json()).lower()
+
+
+def test_patient_api_rejects_malformed_diagnosis(client, tokens):
+    response = client.post(
+        "/api/doctor/patients",
+        headers=tokens["therapist"],
+        json={
+            "full_name": "Тестовый Пациент",
+            "birth_date": "1990-01-01",
+            "sex": "f",
+            "diagnoses": [{"title": "Диагноз без кода МКБ-10"}],
+        },
+    )
+    assert response.status_code == 422
+    assert "МКБ-10" in response.text

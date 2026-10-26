@@ -48,6 +48,7 @@ function ScaleEditor({ initial, todo, isNew = false, version }: {
   const [check, setCheck] = useState<ValidationResult | null>(null)
   const [note, setNote] = useState('')
   const [sent, setSent] = useState<number | null>(null)
+  const methodsState = useApi<string[]>('/api/knowledge/scoring-methods')
 
   const set = (patch: Partial<ScaleBody>) => {
     setScale((s) => ({ ...s, ...patch }))
@@ -84,6 +85,7 @@ function ScaleEditor({ initial, todo, isNew = false, version }: {
 
   const subscales = scale.scoring?.subscales ?? {}
   const method = scale.scoring?.method ?? 'sum'
+  const methodOptions = (methodsState.data ?? Object.keys(METHODS)).map((value) => [value, METHODS[value] ?? value] as const)
 
   return (
     <>
@@ -99,19 +101,20 @@ function ScaleEditor({ initial, todo, isNew = false, version }: {
       <form className="form wide" onSubmit={onSubmit}>
         <section aria-labelledby="basics-h">
           <h2 id="basics-h">Основное</h2>
-          <div className="row">
-            <label>
+          <div className="row form-row-aligned">
+            <label className="field-block">
               Код
               <input required pattern="[A-Za-z0-9_]{2,16}" readOnly={!isNew} value={scale.code}
                      aria-describedby="code-hint" onChange={(e) => set({ code: e.target.value.toUpperCase() })} />
-              <span id="code-hint" className="muted small">Латиница, цифры, «_», например PHQ9</span>
+              <span id="code-hint" className="field-hint">Латиница, цифры, «_», например PHQ9</span>
             </label>
-            <label>
+            <label className="field-block">
               Кто заполняет
               <select value={scale.respondent} onChange={(e) => set({ respondent: e.target.value as ScaleBody['respondent'] })}>
                 <option value="patient">Пациент</option>
                 <option value="clinician">Врач</option>
               </select>
+              <span className="field-hint field-hint-spacer" aria-hidden="true">&nbsp;</span>
             </label>
           </div>
           <label>
@@ -132,10 +135,11 @@ function ScaleEditor({ initial, todo, isNew = false, version }: {
 
         <section aria-labelledby="scoring-h">
           <h2 id="scoring-h">Подсчёт и интерпретация</h2>
+          {methodsState.error && <p className="message message-error">Не удалось загрузить список методов из API; показаны локальные значения по умолчанию.</p>}
           <label>
             Способ подсчёта
             <select value={method} onChange={(e) => set({ scoring: { ...scale.scoring, method: e.target.value } })}>
-              {Object.entries(METHODS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              {methodOptions.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
           </label>
           <BandsEditor bands={scale.bands} onChange={(bands) => set({ bands })} />

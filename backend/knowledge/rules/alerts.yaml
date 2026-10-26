@@ -10,6 +10,8 @@
 #   pharmacovigilance_draft — черновик извещения о нежелательной реакции (Росздравнадзор)
 # Пороги по умолчанию. Врач может переопределить их для конкретного пациента
 # (индивидуальная настройка предельных значений — Приказ МЗ РФ № 193н, п. 46 «и»).
+verified: false  # пороги и действия требуют проверки клинической командой
+
 thresholds:
   phq9_severe:      { default: 20, title: "PHQ-9: тяжёлая депрессия, балл ≥" }
   phq9_delta:       { default: 5,  title: "PHQ-9: рост с прошлой оценки, баллов ≥" }
@@ -86,7 +88,7 @@ rules:
   - id: low_adherence
     severity: medium
     title: Низкая приверженность терапии
-    when: { or: [{ "<": [{ var: adherence.pct_14d }, { var: thresholds.adherence_pct }] }, { ">=": [{ var: adherence.missed_streak }, { var: thresholds.missed_streak }] }] }
+    when: { and: [{ ">=": [{ var: adherence.doses_14d }, 6] }, { or: [{ "<": [{ var: adherence.pct_14d }, { var: thresholds.adherence_pct }] }, { ">=": [{ var: adherence.missed_streak }, { var: thresholds.missed_streak }] }] }] }
     message: "Приверженность {adherence.pct_14d}% за 14 дней, пропуск {adherence.missed_streak} приёмов подряд"
     actions: [notify_doctor]
     source: "Порог 80% — общепринятый критерий приверженности (WHO, 2003)"

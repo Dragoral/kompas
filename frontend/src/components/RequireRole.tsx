@@ -13,5 +13,6 @@ export function RequireRole({ roles, children }: { roles: Role[]; children: Reac
   if (loading) return <p className="container muted">Загрузка…</p>
   if (!user) return <Navigate to="/login" replace state={{ from: location.pathname }} />
   if (!roles.includes(user.role)) return <Navigate to={homePath(user.role)} replace />
+  if ((user.must_change_password || user.mfa_setup_required) && location.pathname !== '/account') return <Navigate to="/account" replace />
   return <>{children}</>
 }
