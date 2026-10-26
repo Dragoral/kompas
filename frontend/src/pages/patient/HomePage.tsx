@@ -7,6 +7,40 @@ import { ErrorMessage } from '../../components/ErrorMessage'
 import { Loader } from '../../components/Loader'
 import { formatDateTime, formatRegimen } from '../../format'
 
+const ENCOURAGEMENTS = [
+  'Хорошего дня!',
+  'У вас всё получится!',
+  'Хорошего настроения!',
+  'Берегите себя!',
+  'Вы на верном пути!',
+  'Сегодня будет хороший день!',
+  'Маленькие шаги тоже важны!',
+  'Вы справляетесь!',
+  'Пусть день принесёт спокойствие!',
+  'Вы не одни!',
+  'Каждый день — новая возможность!',
+  'Верьте в себя!',
+  'Забота о себе — это сила!',
+  'Вы делаете важные шаги!',
+  'Пусть сегодня будет легче!',
+  'Вы достойны заботы!',
+  'Дышите спокойно!',
+  'Вы движетесь вперёд!',
+  'Хорошего самочувствия!',
+  'Спасибо, что заботитесь о себе!',
+]
+
+async function download(url: string, filename: string): Promise<void> {
+  const response = await fetch(url)
+  if (!response.ok) throw new Error('Не удалось скачать файл напоминаний')
+  const objectUrl = URL.createObjectURL(await response.blob())
+  const link = document.createElement('a')
+  link.href = objectUrl
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(objectUrl)
+}
+
 function todayKey(): string {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -31,6 +65,7 @@ function isDiaryDoneLocal(): boolean {
 export function HomePage() {
   const state = useApi<Overview>('/api/me/overview')
   const [queuedDose, setQueuedDose] = useState(false)
+  const [encouragement] = useState(() => ENCOURAGEMENTS[Math.floor(Math.random() * ENCOURAGEMENTS.length)])
   const reminders = useAction(() => download('/api/me/doses.ics', 'kompas-reminders.ics'))
   const dose = useAction((id: number, status: 'taken' | 'skipped') =>
     api.post<{ queued_offline?: boolean }>('/api/me/doses', { dose_id: id, status, client_id: crypto.randomUUID(), taken_at: new Date().toISOString() }))
@@ -49,7 +84,11 @@ export function HomePage() {
           <>
             {queuedDose && <p className="message" role="status">Отметка сохранена на устройстве и ожидает синхронизации. Сервер и лечащий врач пока не получили запись.</p>}
             {o.crisis && <CrisisBlock contacts={o.crisis_contacts} />}
-            <h1>Здравствуйте, {o.patient.full_name}</h1>
+            <h1>
+              Здравствуйте, {o.patient.full_name}
+              <br />
+              {encouragement}
+            </h1>
             <p>Лечащий врач: {o.doctor.full_name}</p>
             {!o.monitoring_active && (
               <p className="message">Дистанционное наблюдение пока не назначено. Его назначает врач на очном приёме.</p>
