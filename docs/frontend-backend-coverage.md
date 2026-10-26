@@ -100,6 +100,7 @@
 | `GET /api/admin/attending-requests` | `pages/admin/PatientsAdminPage.tsx` | Очередь запросов на смену ведущего врача |
 | `POST /api/admin/attending-requests/{rid}/approve`, `POST /api/admin/attending-requests/{rid}/reject` | `pages/admin/PatientsAdminPage.tsx` | Подтверждение вторым лицом или отклонение запроса на смену ведущего врача |
 | `GET /api/admin/audit`, `GET /api/admin/audit/verify` | `pages/admin/AuditPage.tsx` | Журнал аудита и проверка целостности |
+| `GET /api/admin/notifications` | `pages/admin/NotificationsPage.tsx` | Журнал SMS и push: получатель, канал, статус доставки; номера маскируются |
 | `GET /api/analytics/summary` | `pages/AnalyticsPage.tsx` (администратор или врач-рецензент) | Обезличенная статистика с k-анонимностью |
 | `GET /api/metrics` | `pages/admin/MetricsPage.tsx` (только администратор; backend требует роль `admin`) | Метрики API, доставки, ack, рекомендаций, извлечения и backup-drill |
 | `GET /api/health`, `GET /api/ready` | `pages/admin/MetricsPage.tsx`, `pages/admin/SystemPage.tsx` | Публичные liveness/readiness probes без раскрытия внутренней диагностики; подробности — через защищённый `/api/admin/system` |

@@ -74,6 +74,7 @@ const NAV: Record<Role, NavGroup[]> = {
       { to: '/admin/users', label: 'Пользователи', icon: 'users' },
       { to: '/admin/patients', label: 'Пациенты', icon: 'heart' },
       { to: '/admin/audit', label: 'Журнал аудита', icon: 'clipboard' },
+      { to: '/admin/notifications', label: 'Журнал уведомлений', icon: 'bell' },
     ] },
     { label: 'Клинические данные', items: [
       { to: '/knowledge', label: 'База знаний', icon: 'book', end: true },
@@ -84,7 +85,7 @@ const NAV: Record<Role, NavGroup[]> = {
 const PAGE_TITLES: Array<[string, string]> = [
   ['/doctor/patients/new', 'Новый пациент'], ['/doctor/patients', 'Пациенты'], ['/doctor/actions', 'Очередь решений'], ['/doctor/alerts', 'Оповещения'], ['/analytics', 'Клиническая аналитика'], ['/admin/metrics', 'Технические метрики'], ['/about', 'О сервисе'],
   ['/knowledge/review', 'Согласование знаний'], ['/knowledge/import', 'Импорт шкалы'], ['/knowledge', 'База знаний'],
-  ['/admin/system', 'Состояние системы'], ['/admin/users', 'Пользователи'], ['/admin/patients', 'Пациенты'], ['/admin/audit', 'Журнал аудита'],
+  ['/admin/system', 'Состояние системы'], ['/admin/users', 'Пользователи'], ['/admin/patients', 'Пациенты'], ['/admin/audit', 'Журнал аудита'], ['/admin/notifications', 'Журнал уведомлений'],
   ['/me/diary', 'Дневник самочувствия'], ['/me/history', 'Динамика состояния'], ['/me/messages', 'Сообщения'], ['/me/adverse-event', 'Нежелательная реакция'], ['/me/trusted-contacts', 'Доверенные контакты'], ['/me/data', 'Личные данные'], ['/me', 'Мой обзор'], ['/account', 'Учётная запись'],
 ]
 

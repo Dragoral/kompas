@@ -61,3 +61,18 @@ def test_card_header_bmi(client, tokens):
 
 def test_malformed_notification_template_falls_back():
     assert notify._format_template("{missing}", {}, "safe fallback", "test-template") == "safe fallback"
+
+
+def test_admin_notification_journal_masks_phones_and_hides_patient_name(client, tokens):
+    import uuid
+    from app import notify
+    from app.db import WriteSession
+    client.post("/api/me/scales", headers=tokens["patient5"], json={
+        "scale_code": "PHQ9", "answers": {**{str(i): 1 for i in range(1, 9)}, "9": 2}, "client_id": str(uuid.uuid4())})
+    with WriteSession() as db:
+        notify.send_pending(db)
+    rows = client.get("/api/admin/notifications?channel=sms", headers=tokens["admin"]).json()
+    assert rows and all(r["phone"] is None or "***" in r["phone"] for r in rows)
+    tc = [r for r in rows if r["reason"] == "доверенное лицо пациента"]
+    assert tc and all(r["text"] is None for r in tc)  # в тексте имя пациента — администратору не показываем
+    assert client.get("/api/admin/notifications", headers=tokens["psychiatrist"]).status_code == 403

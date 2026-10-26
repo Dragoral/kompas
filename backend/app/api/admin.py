@@ -10,9 +10,10 @@
 """
 from __future__ import annotations
 
+import json
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -20,7 +21,8 @@ from sqlalchemy.orm import Session
 from .. import auth
 from ..db import get_db
 from ..engine import knowledge
-from ..models import AuditLog, KnowledgeItem, KnowledgeVersion, Patient, PatientReassignmentRequest, User, now
+from ..models import (AuditLog, KnowledgeItem, KnowledgeVersion, Notification, Patient, PatientReassignmentRequest,
+                      TrustedContact, User, now)
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 review = APIRouter(prefix="/api/review", tags=["review"])
@@ -369,6 +371,42 @@ def reject_reassignment(rid: int, data: ReassignmentDecisionIn, request: Request
 
 
 # --- журнал -------------------------------------------------------------------
+RECIPIENT = {"attending": "лечащий врач", "duty": "дежурный врач", "escalation": "дежурный (эскалация)",
+             "trusted_contact": "доверенное лицо пациента"}
+
+
+def _mask(phone: str | None) -> str | None:
+    digits = "".join(ch for ch in phone or "" if ch.isdigit())
+    return f"+{digits[0]} *** ***-**-{digits[-2:]}" if len(digits) >= 4 else None
+
+
+@router.get("/notifications")
+def notifications(channel: str | None = Query(None, pattern="^(sms|push|call)$"),
+                  status: str | None = Query(None, pattern="^(pending|sent|failed)$"),
+                  limit: int = Query(100, ge=1, le=500), user: User = Depends(admin_only), db: Session = Depends(get_db)):
+    """Журнал внешних уведомлений (193н п. 46 «д»): кому, каким каналом, доставлено ли.
+    Номера маскируются; текст доверенному лицу (содержит имя пациента) не показывается."""
+    stmt = select(Notification).order_by(Notification.id.desc()).limit(limit)
+    if channel:
+        stmt = stmt.where(Notification.channel == channel)
+    if status:
+        stmt = stmt.where(Notification.status == status)
+    out = []
+    for n in db.scalars(stmt):
+        if n.trusted_contact_id:
+            tc = db.get(TrustedContact, n.trusted_contact_id)
+            who, phone, text = RECIPIENT["trusted_contact"], tc.phone if tc else None, None
+        else:
+            u = db.get(User, n.user_id) if n.user_id else None
+            who = f"{u.full_name} ({u.login})" if u and u.role != "patient" else "пациент"
+            phone = u.phone if u and n.channel == "sms" else None
+            text = n.text if n.channel != "push" else json.loads(n.text).get("body")
+        out.append({"id": n.id, "channel": n.channel, "reason": RECIPIENT.get(n.reason or "", n.reason), "recipient": who,
+                    "phone": _mask(phone), "text": text, "status": n.status, "attempts": n.attempts, "provider": n.provider,
+                    "alert_id": n.alert_id, "created_at": n.created_at, "sent_at": n.sent_at, "error": n.last_error})
+    return out
+
+
 @router.get("/audit")
 def audit_log(patient_id: int | None = None, action: str | None = None, limit: int = 200,
               user: User = Depends(admin_only), db: Session = Depends(get_db)):

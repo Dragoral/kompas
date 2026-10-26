@@ -10,6 +10,7 @@ import { MetricsPage } from './pages/admin/MetricsPage'
 import { ClinicalActionsPage } from './pages/doctor/ClinicalActionsPage'
 import { RequireReviewerOrAdmin } from './components/RequireReviewerOrAdmin'
 import { AuditPage } from './pages/admin/AuditPage'
+import { NotificationsPage } from './pages/admin/NotificationsPage'
 import { PatientsAdminPage } from './pages/admin/PatientsAdminPage'
 import { SystemPage } from './pages/admin/SystemPage'
 import { UsersPage } from './pages/admin/UsersPage'
@@ -114,6 +115,7 @@ export function App() {
         <Route path="/admin/metrics" element={<MetricsPage />} />
         <Route path="/admin/users" element={<UsersPage />} />
         <Route path="/admin/audit" element={<AuditPage />} />
+        <Route path="/admin/notifications" element={<NotificationsPage />} />
         <Route path="/admin/patients" element={<PatientsAdminPage />} />
         <Route path="/knowledge/:kind/:code/versions" element={<VersionsPage />} />
       </Route>

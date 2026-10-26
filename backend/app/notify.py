@@ -109,6 +109,8 @@ def enqueue_escalation(db: Session, kb: dict, alert, patient, duty: User) -> Non
 
 def _send_log(phone: str | None, text: str) -> str:
     # текст не логируется: в сообщении доверенному лицу есть имя пациента
+    if not phone:  # как и настоящий провайдер: без номера отправить нельзя
+        raise RuntimeError("не указан телефон получателя")
     log.warning("SMS (провайдер log) -> %s***, %d символов", (phone or "нет номера")[:4], len(text))
     return "log"
 
@@ -118,7 +120,9 @@ def _send_smsru(phone: str | None, text: str) -> str:
     if not phone:
         raise RuntimeError("не указан телефон получателя")
     r = httpx.post("https://sms.ru/sms/send", timeout=10,
-                   data={"api_id": os.environ["SMSRU_API_ID"], "to": phone, "msg": text, "json": 1})
+                   data={"api_id": os.environ["SMSRU_API_ID"], "to": phone, "msg": text, "json": 1,
+                         # SMSRU_TEST=1: провайдер проверяет запрос, но не отправляет SMS и не списывает деньги
+                         **({"test": 1} if os.getenv("SMSRU_TEST") == "1" else {})})
     r.raise_for_status()
     body = r.json()
     if body.get("status") != "OK":
