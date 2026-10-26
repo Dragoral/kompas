@@ -26,7 +26,7 @@ from .crypto import vault
 from .db import Base, WriteSession as SessionLocal, engine
 from .engine import alerts, knowledge, scales
 from .models import AdverseEvent, DiaryEntry, DoseLog, Patient, Prescription, ScaleAssignment, ScaleResult, TrustedContact, User, Visit, now
-from .services import schedule_doses
+from .services import apply_monitoring_plan, schedule_doses
 
 PASSWORD = os.getenv("DEMO_PASSWORD", "Kompas-demo-2026")  # на публичном стенде задать свой
 rnd = random.Random(42)
@@ -84,6 +84,8 @@ def patient(db, login, doctor: User, full_name, birth, sex, profile, diagnoses, 
               reason="Первичный приём", plan={"remote_monitoring": True})
     db.add(v)
     v.notes = "Синтетическая запись для демонстрации"
+    apply_monitoring_plan(db, p)
+    db.flush()
     return p
 
 
@@ -99,7 +101,11 @@ def prescribe(db, kb, p: Patient, doctor: User, drug_id: str, indication: str, d
     for d in db.scalars(select(DoseLog).where(DoseLog.prescription_id == rx.id, DoseLog.scheduled_for < now())):
         if rnd.random() < adherence:
             d.status, d.taken_at = "taken", d.scheduled_for + timedelta(minutes=rnd.randint(0, 50))
+    planned = {a.scale_code for a in db.scalars(select(ScaleAssignment).where(
+        ScaleAssignment.patient_id == p.id, ScaleAssignment.active.is_(True), ScaleAssignment.every_days.is_not(None)))}
     for s in drug["monitoring"]["scales"]:
+        if s["scale"] in planned:
+            continue
         db.add(ScaleAssignment(patient_id=p.id, scale_code=s["scale"], every_days=s["every_days"],
                                next_due=date.today() + timedelta(days=rnd.randint(0, 3)), reason=f"План мониторинга: {drug['trade_name']}"))
     return rx

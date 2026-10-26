@@ -52,6 +52,10 @@ SCHEMAS: dict[str, dict] = {
                     "properties": {"title": {"type": "string"}, "items": {"type": "array", "items": {"type": "integer"}, "minItems": 1},
                                    "method": {"enum": ["sum", "mean", "weighted_sum"]}, "bands": {"type": "array", "items": _BAND}}}}}},
             "bands": {"type": "array", "minItems": 1, "items": _BAND},
+            "norm_groups": {"type": "array", "description": "Нормы для групп пациентов (пол, возраст): первая подходящая группа заменяет общие градации",
+                            "items": {"type": "object", "required": ["when", "bands"],
+                                      "properties": {"title": {"type": "string"}, "when": _COND,
+                                                     "bands": {"type": "array", "minItems": 1, "items": _BAND}}}},
             "mcid": {"type": "number", "description": "Клинически значимое изменение балла"},
         },
     },
@@ -153,8 +157,26 @@ def _check_condition(cond, path: str, errors: list, thresholds: set | None = Non
             errors.append({"path": path, "message": f"Порог «{var}» не объявлен в разделе thresholds"})
 
 
-def _scale_semantics(b: dict, errors: list, warnings: list) -> None:
+def _check_bands(b: dict, bands: list, path: str, errors: list) -> None:
+    """Градации без пересечений и пропусков, покрывают весь диапазон баллов шкалы."""
     from .scales import theoretical_range
+    bands = sorted(bands, key=lambda x: x["min"])
+    found = len(errors)
+    for a, c in zip(bands, bands[1:]):
+        if c["min"] <= a["max"]:
+            errors.append({"path": path, "message": f"Градации пересекаются: «{a['label']}» и «{c['label']}»"})
+    if len(errors) > found or not bands:
+        return
+    lo, hi = theoretical_range(b)
+    if bands[0]["min"] > lo or bands[-1]["max"] < hi:
+        errors.append({"path": path, "message": f"Градации не покрывают диапазон баллов {lo:g}–{hi:g}"})
+    integer = b.get("scoring", {}).get("method", "sum") in ("sum", "max_item_positive")
+    for a, c in zip(bands, bands[1:]):
+        if integer and c["min"] - a["max"] > 1:
+            errors.append({"path": path, "message": f"Пропуск между градациями «{a['label']}» и «{c['label']}»"})
+
+
+def _scale_semantics(b: dict, errors: list, warnings: list) -> None:
     ns = [it.get("n") for it in b.get("items", [])]
     dup = sorted({n for n in ns if ns.count(n) > 1})
     if dup:
@@ -172,19 +194,12 @@ def _scale_semantics(b: dict, errors: list, warnings: list) -> None:
         missing = [n for n in sub.get("items", []) if n not in ns]
         if missing:
             errors.append({"path": f"scoring.subscales.{key}", "message": f"Подшкала ссылается на несуществующие пункты: {missing}"})
-    bands = sorted(b.get("bands", []), key=lambda x: x["min"])
-    for a, c in zip(bands, bands[1:]):
-        if c["min"] <= a["max"]:
-            errors.append({"path": "bands", "message": f"Градации пересекаются: «{a['label']}» и «{c['label']}»"})
-    if errors or not bands:
+    _check_bands(b, b.get("bands", []), "bands", errors)
+    for i, g in enumerate(b.get("norm_groups") or []):
+        _check_condition(g.get("when"), f"norm_groups.{i}.when", errors)
+        _check_bands(b, g.get("bands", []), f"norm_groups.{i}.bands", errors)
+    if errors:
         return
-    lo, hi = theoretical_range(b)
-    if bands[0]["min"] > lo or bands[-1]["max"] < hi:
-        errors.append({"path": "bands", "message": f"Градации не покрывают диапазон баллов {lo:g}–{hi:g}"})
-    integer = b.get("scoring", {}).get("method", "sum") in ("sum", "max_item_positive")
-    for a, c in zip(bands, bands[1:]):
-        if integer and c["min"] - a["max"] > 1:
-            errors.append({"path": "bands", "message": f"Пропуск между градациями «{a['label']}» и «{c['label']}»"})
     if not b.get("verified"):
         warnings.append({"path": "verified", "message": "Текст шкалы не отмечен как сверенный с валидированной версией"})
 

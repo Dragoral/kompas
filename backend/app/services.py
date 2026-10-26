@@ -94,6 +94,29 @@ def _existing(db: Session, model, patient_id: int, client_id: str | None):
     return db.scalar(select(model).where(model.patient_id == patient_id, model.client_id == client_id))
 
 
+BASE_PLAN = "Базовый план наблюдения"
+
+
+def apply_monitoring_plan(db: Session, patient: Patient) -> int:
+    """Назначить шкалы базового плана наблюдения (справочник monitoring_plan), которых ещё нет."""
+    plan = knowledge.get(db)["dictionary"].get("monitoring_plan", {}).get("scales", [])
+    active = set(db.scalars(select(ScaleAssignment.scale_code).where(
+        ScaleAssignment.patient_id == patient.id, ScaleAssignment.active.is_(True), ScaleAssignment.every_days.is_not(None))))
+    n = 0
+    for s in plan:
+        if s["scale"] not in active:
+            db.add(ScaleAssignment(patient_id=patient.id, scale_code=s["scale"], every_days=s["every_days"],
+                                   next_due=date.today(), reason=BASE_PLAN))
+            n += 1
+    return n
+
+
+def scale_subject(patient: Patient) -> dict:
+    """Данные пациента для выбора норм шкалы (пол, возраст) — без других сведений."""
+    from .engine.context import age
+    return {"patient": {"sex": patient.sex, "age": age(patient.birth_date) if patient.birth_date else None}}
+
+
 def submit_scale(db: Session, patient: Patient, data: ScaleIn, user: User, received_at: datetime) -> tuple[ScaleResult, list]:
     if user.role == "patient":
         ensure_can_submit(patient)
@@ -106,7 +129,7 @@ def submit_scale(db: Session, patient: Patient, data: ScaleIn, user: User, recei
     if scale["respondent"] == "clinician" and user.role != "doctor":
         raise HTTPException(403, "Шкала заполняется врачом")
     try:
-        res = scales.evaluate(scale, data.answers)
+        res = scales.evaluate(scale, data.answers, scale_subject(patient))
     except ValueError as e:
         raise HTTPException(422, str(e))
     taken_at = min(data.taken_at, received_at) if data.taken_at else received_at  # не из будущего

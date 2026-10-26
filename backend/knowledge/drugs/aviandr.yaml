@@ -119,7 +119,7 @@ pharmacokinetics:
 # План мониторинга при назначении (используется для расписания шкал и визитов)
 monitoring:
   scales:
-    - { scale: GAD7, every_days: 7 }
+    - { scale: GAD7, every_days: 14 }
     - { scale: PHQ9, every_days: 14 }
   # КР 457 (3.2): оценка эффективности и переносимости на 7-й, 14-й, 28-й дни, далее раз в 4 недели
   clinician_scales:

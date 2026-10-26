@@ -51,6 +51,6 @@ adverse_reactions:
 
 monitoring:
   scales:
-    - { scale: PHQ9, every_days: 7 }
+    - { scale: PHQ9, every_days: 14 }
     - { scale: GAD7, every_days: 14 }
   response_check_week: 4

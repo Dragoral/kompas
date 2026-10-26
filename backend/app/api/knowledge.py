@@ -91,6 +91,8 @@ def validate(data: BodyIn, user: User = Depends(author)):
 class PreviewIn(BaseModel):
     scale: dict
     answers: dict[str, float]
+    sex: str | None = Field(None, pattern="^(m|f)$")  # для шкал с нормами по полу/возрасту
+    age: int | None = Field(None, ge=0, le=120)
 
 
 @router.post("/scales/preview")
@@ -100,7 +102,7 @@ def preview_scale(data: PreviewIn, user: User = Depends(author)):
     if errors:
         raise HTTPException(422, {"message": "Шкала не прошла проверку", "errors": errors})
     try:
-        r = scales.evaluate(data.scale, data.answers)
+        r = scales.evaluate(data.scale, data.answers, {"patient": {"sex": data.sex, "age": data.age}})
     except ValueError as e:
         raise HTTPException(422, str(e))
     lo, hi = scales.theoretical_range(data.scale)

@@ -94,14 +94,26 @@ def validate_answers(scale: dict, answers: dict) -> dict:
     return ans
 
 
-def evaluate(scale: dict, answers: dict) -> dict:
+def norm_bands(scale: dict, subject: dict | None) -> tuple[list[dict], str | None]:
+    """Градации с учётом норм для групп (пол, возраст): первая группа, чьё условие
+    выполняется для пациента; иначе — общие градации шкалы."""
+    from . import logic
+    for g in scale.get("norm_groups") or []:
+        if subject is not None and logic.evaluate(g["when"], subject):
+            return g["bands"], g.get("title")
+    return scale.get("bands", []), None
+
+
+def evaluate(scale: dict, answers: dict, subject: dict | None = None) -> dict:
+    """subject — данные пациента для выбора норм: {"patient": {"sex": "f", "age": 34}}."""
     ans = validate_answers(scale, answers)
     sc = scale.get("scoring", {})
     method = METHODS.get(sc.get("method", "sum"))
     if method is None:
         raise ValueError(f"Неизвестный метод подсчёта {sc.get('method')!r}")
     total = _num(method(scale["items"], ans))
-    band = _band(scale.get("bands", []), total)
+    bands, norm_group = norm_bands(scale, subject)
+    band = _band(bands, total)
     by_n = {str(it["n"]): it for it in scale["items"]}
     subscales = {}
     for key, sub in (sc.get("subscales") or {}).items():
@@ -113,6 +125,7 @@ def evaluate(scale: dict, answers: dict) -> dict:
         subscales[key] = entry
     return {
         "score": total, "band": band["label"], "severity": band.get("severity", 0), "subscales": subscales,
+        "norm_group": norm_group,
         "critical_items": [int(it["n"]) for it in scale["items"] if it.get("critical") and ans.get(str(it["n"]))],
         "answers": ans,
     }

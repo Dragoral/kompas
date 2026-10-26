@@ -93,3 +93,34 @@ def test_unverified_clinical_knowledge_is_reported(client, tokens):
     assert "drug:sertraline" in issues
     assert "drug:aviandr" not in issues
     assert "guideline:kr301" not in issues
+
+
+def test_itt_norms_by_sex_and_daily_plan(client, tokens):
+    from app.db import SessionLocal
+    from app.engine import knowledge, scales
+    with SessionLocal() as db:
+        itt = knowledge.get(db)["scale"]["ITT"]
+    ans = {str(n): 1 for n in range(1, 16)}  # сырой балл 15
+    assert scales.evaluate(itt, ans, {"patient": {"sex": "m"}})["band"].startswith("6 станайн")
+    female = scales.evaluate(itt, ans, {"patient": {"sex": "f"}})
+    assert female["band"].startswith("5 станайн") and female["norm_group"] == "Нормы для женщин"
+    # пациентка: результат считается по женским нормам
+    r = client.post("/api/me/scales", headers=tokens["patient1"],
+                    json={"scale_code": "ITT", "answers": ans, "client_id": str(uuid.uuid4())}).json()
+    assert r["score"] == 15 and r["band"].startswith("5 станайн")
+    # базовый план: ИТТ ежедневно, GAD-7 и PHQ-9 раз в 2 недели
+    p = pid(client, tokens, "psychiatrist", "P-DEMO1")
+    plan = {a["scale_code"]: a["every_days"] for a in
+            client.get(f"/api/doctor/patients/{p}", headers=tokens["psychiatrist"]).json()["assignments"] if a["every_days"]}
+    assert plan == {"ITT": 1, "GAD7": 14, "PHQ9": 14}
+
+
+def test_norm_group_bands_are_validated(client, tokens):
+    from app.engine import schemas
+    body = {"code": "NG", "title": "Нормы", "respondent": "patient", "license": "Свободно", "validation": ["x"],
+            "items": [{"n": 1, "text": "Вопрос", "options": [{"value": 0, "label": "a"}, {"value": 3, "label": "b"}]}],
+            "bands": [{"min": 0, "max": 3, "label": "Все"}],
+            "norm_groups": [{"when": {"==": [{"var": "patient.sex"}, "f"]},
+                             "bands": [{"min": 0, "max": 1, "label": "Низко"}]}]}
+    errors, _ = schemas.check("scale", body)
+    assert any(e["path"] == "norm_groups.0.bands" and "не покрывают" in e["message"] for e in errors)

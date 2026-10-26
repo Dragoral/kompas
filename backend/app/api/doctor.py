@@ -401,6 +401,8 @@ def set_monitoring(pid: int, data: MonitoringIn, request: Request, user: User = 
     if data.active and not p.in_person_visit_at:
         raise HTTPException(409, "Дистанционное наблюдение назначается по результатам очного приёма (Приказ МЗ РФ № 193н, п. 43)")
     p.monitoring_active = data.active
+    if data.active:
+        services.apply_monitoring_plan(db, p)
     db.commit()
     return {"ok": True}
 

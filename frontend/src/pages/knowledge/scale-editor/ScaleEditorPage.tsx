@@ -143,6 +143,12 @@ function ScaleEditor({ initial, todo, isNew = false, version }: {
             </select>
           </label>
           <BandsEditor bands={scale.bands} onChange={(bands) => set({ bands })} />
+          {Array.isArray(scale.norm_groups) && scale.norm_groups.length > 0 && (
+            <p className="message">
+              Для этой шкалы заданы отдельные нормы для групп пациентов ({(scale.norm_groups as { title?: string }[]).map((g) => g.title ?? 'группа').join(', ')}).
+              Градации выше — нормы по умолчанию; нормы групп редактируются в разделе JSON и проверяются так же.
+            </p>
+          )}
           <h3>Подшкалы</h3>
           <SubscalesEditor subscales={subscales}
                            onChange={(s) => set({ scoring: { ...scale.scoring, subscales: s } })} />
@@ -205,7 +211,8 @@ interface PreviewResult {
 function Preview({ scale }: { scale: ScaleBody }) {
   const [answers, setAnswers] = useState<Answers>({})
   const [result, setResult] = useState<PreviewResult | null>(null)
-  const run = useAction(() => api.post<PreviewResult>('/api/knowledge/scales/preview', { scale: toBody(scale), answers }))
+  const [sex, setSex] = useState<'' | 'm' | 'f'>('')
+  const run = useAction(() => api.post<PreviewResult>('/api/knowledge/scales/preview', { scale: toBody(scale), answers, sex: sex || null }))
 
   const onRun = async () => {
     const r = await run.run()
@@ -216,6 +223,16 @@ function Preview({ scale }: { scale: ScaleBody }) {
     <details>
       <summary>Пробное заполнение</summary>
       <p className="muted">Ответьте на вопросы так, как ответил бы пациент, и проверьте подсчёт. Ответы никуда не сохраняются.</p>
+      {Array.isArray(scale.norm_groups) && scale.norm_groups.length > 0 && (
+        <label className="inline">
+          Пол пациента для норм{' '}
+          <select value={sex} onChange={(e) => setSex(e.target.value as '' | 'm' | 'f')}>
+            <option value="">не указан</option>
+            <option value="m">мужской</option>
+            <option value="f">женский</option>
+          </select>
+        </label>
+      )}
       <ScaleQuestions scale={toBody(scale) as unknown as ScaleDefinition} answers={answers} onChange={setAnswers} idPrefix="preview" optional />
       <p><button type="button" className="secondary" disabled={run.pending} onClick={onRun}>Посчитать</button></p>
       <ErrorMessage error={run.error} />

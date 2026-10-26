@@ -38,5 +38,5 @@ adverse_reactions:
 
 monitoring:
   scales:
-    - { scale: GAD7, every_days: 7 }
+    - { scale: GAD7, every_days: 14 }
   response_check_week: 4
