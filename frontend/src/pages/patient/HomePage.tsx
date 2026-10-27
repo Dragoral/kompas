@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import React, { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, download } from '../../api/client'
 import type { ConsentText, Overview } from '../../api/types'
@@ -6,6 +6,33 @@ import { useAction, useApi } from '../../api/useApi'
 import { ErrorMessage } from '../../components/ErrorMessage'
 import { Loader } from '../../components/Loader'
 import { formatDateTime, formatRegimen } from '../../format'
+
+const ENCOURAGEMENTS = [
+  'Каждый маленький шаг к лечению — это уже победа.',
+  'Вы справляетесь лучше, чем вам кажется.',
+  'Сегодня хороший день, чтобы позаботиться о себе.',
+  'Вы не одни — рядом ваш врач и вся медицинская команда.',
+  'Даже спокойный и обычный день — это шаг вперёд.',
+  'Ваши усилия важны, и они обязательно дадут результат.',
+  'Выздоровление идёт шаг за шагом, и вы уже на пути.',
+  'Позаботиться о себе — это сильный и правильный выбор.',
+  'Не торопите себя: у вас есть право двигаться в своём темпе.',
+  'Хорошее самочувствие складывается из маленьких привычек.',
+  'Вы делаете важное дело — следите за своим здоровьем.',
+  'Трудные дни проходят, а ваши старания остаются с вами.',
+  'Гордитесь собой: вы продолжаете идти, несмотря ни на что.',
+  'Пусть сегодня будет немного легче, чем вчера.',
+  'Ваше самочувствие важно, и вы заслуживаете заботы.',
+  'Верьте в себя — перемены к лучшему уже начались.',
+  'Отдых и забота о себе — тоже часть лечения.',
+  'Каждый день рядом с вами — люди, которым вы небезразличны.',
+  'Спасибо, что заботитесь о своём здоровье. Это ценно.',
+  'Вы уже сделали многое — продолжайте в том же духе.',
+]
+
+// Выбирается один раз при загрузке страницы: меняется при каждом обновлении сайта,
+// но не «мигает» при перерисовках компонента (например, после отметки приёма).
+const SESSION_ENCOURAGEMENT = ENCOURAGEMENTS[Math.floor(Math.random() * ENCOURAGEMENTS.length)]
 
 function todayKey(): string {
   const d = new Date()
@@ -50,6 +77,7 @@ export function HomePage() {
             {queuedDose && <p className="message" role="status">Отметка сохранена на устройстве и ожидает синхронизации. Сервер и лечащий врач пока не получили запись.</p>}
             {o.crisis && <CrisisBlock contacts={o.crisis_contacts} />}
             <h1>Здравствуйте, {o.patient.full_name}</h1>
+            <p className="patient-encourage">{SESSION_ENCOURAGEMENT}</p>
             <p>Лечащий врач: {o.doctor.full_name}</p>
             {!o.monitoring_active && (
               <p className="message">Дистанционное наблюдение пока не назначено. Его назначает врач на очном приёме.</p>
