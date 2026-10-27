@@ -268,8 +268,8 @@ export function Layout() {
             <div className="topbar-user"><span className={`role-avatar avatar-${user.role}`}>{initials(user.full_name)}</span><div><strong>{user.full_name}</strong><small>{ROLE_LABEL[user.role]}</small></div></div>
           </div>
         </header>
-        {user.role === 'doctor' && <DoctorAlertWatcher/>}
-        {user.role === 'patient' && <><PatientOfflineSyncPanel/><PatientLiveWatcher/></>}
+        {user.role === 'doctor' && !user.mfa_setup_required && !user.must_change_password && <DoctorAlertWatcher/>}
+        {user.role === 'patient' && !user.must_change_password && (<><PatientOfflineSyncPanel/><PatientLiveWatcher/></>)}
         <main id="main" className="app-main">
           <div className="page-container">
             <ErrorBoundary resetKey={location.pathname}><Outlet/></ErrorBoundary>
